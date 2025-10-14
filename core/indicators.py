@@ -22,7 +22,6 @@ def bollinger_bands(close: pd.Series, window: int = 20, n_std: float = 2.0):
     return ma, upper, lower
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
-    # Proxy dla danych tylko z Close: TR z różnic w Close
     prev_close = close.shift(1)
     tr1 = (high - low).abs() if high is not None and low is not None else (close - prev_close).abs()
     tr2 = (high - prev_close).abs() if high is not None else tr1
@@ -31,7 +30,6 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> 
     return tr.rolling(window).mean()
 
 def swings(close: pd.Series, lookback:int=5):
-    # Proste HH/HL/LL/LH
     rolling_max = close.rolling(lookback).max()
     rolling_min = close.rolling(lookback).min()
     return rolling_max, rolling_min

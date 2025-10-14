@@ -4,12 +4,9 @@ import pandas as pd
 STOOQ_URL = "https://stooq.com/q/d/l/?s={symbol}&i=d"
 
 SYMBOL_MAP = {
-    "^spx": "^spx",
-    "spx": "^spx",
-    "^ndx": "^ndx",
-    "ndx": "^ndx",
-    "eurusd": "eurusd",
-    "btcusd": "btcusd",
+    "^spx": "^spx", "spx": "^spx",
+    "^ndx": "^ndx", "ndx": "^ndx",
+    "eurusd": "eurusd", "btcusd": "btcusd",
     "^vix": "^vix",
 }
 

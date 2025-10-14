@@ -17,6 +17,6 @@ def heuristic_from_vix(vix_close: pd.Series, span:int=10, cap:float=0.85) -> pd.
         s = pd.Series(0, index=v.index)
     else:
         z = (v.clip(p5, p95) - p5) / (p95 - p5)
-        s = 1 - 2*z  # 1 -> -1 gdy VIX rośnie
+        s = 1 - 2*z
     s = ewma(s, span=span).clip(-cap, cap)
     return s.reindex(vix_close.index).fillna(method="ffill").fillna(0)
