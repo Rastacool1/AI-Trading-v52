@@ -5,3 +5,4 @@ matplotlib>=3.7.0
 scipy>=1.11.0
 yfinance>=0.2.40
 plotly>=5.22.0
+requests>=2.31.0
