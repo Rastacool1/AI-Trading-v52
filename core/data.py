@@ -86,22 +86,34 @@ def from_csv(file) -> pd.DataFrame:
     return _normalize_df(df)
 
 def from_stooq(symbol: str) -> pd.DataFrame:
-    sym = STOOQ_MAP.get(symbol.lower().strip(), symbol.lower().strip())
-    url = STOOQ_URL.format(symbol=sym)
+    """
+    Czyta dane dzienne ze Stooq dla symboli takich jak:
+    btcpln, btcusd, eurusd, spx, ndx, vix.
+    Automatycznie normalizuje wielkość liter i usuwa znaki ^ / spacje.
+    """
+    # 🩹 normalizacja symbolu: usunięcie ^, spacji, wymuszenie małych liter
+    sym = symbol.strip().lower().replace("^", "").replace("/", "").replace("=", "")
+    url = f"https://stooq.pl/q/d/l/?s={sym}&i=d"
 
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        text = r.text.strip()
+    import requests, io
+    r = requests.get(url, timeout=10)
+    r.raise_for_status()
+    text = r.text.strip()
 
-        # Wykryj HTML/„brak danych”
-        low = text.lower()
-        if low.startswith("<") or "brak danych" in low or "error" in low:
-            raise ValueError(f"Stooq nie zwrócił poprawnego CSV dla '{sym}'.")
+    # sprawdzenie czy CSV jest poprawny
+    if text.startswith("<") or "brak danych" in text.lower():
+        raise ValueError(f"Stooq zwrócił HTML lub pustkę dla '{sym}' – sprawdź symbol.")
 
-        df = _parse_stooq_text(text)
-        if df is None:
-            raise ValueError("Nie udało się sparsować CSV ze Stooq.")
+    # próby parsowania różnych separatorów
+    for sep in (";", ","):
+        try:
+            df = pd.read_csv(io.StringIO(text), sep=sep)
+            if not df.empty:
+                return _normalize_df(df)
+        except Exception:
+            continue
+
+    raise ValueError(f"Nie udało się sparsować CSV ze Stooq ({url}).")
 
         return _normalize_df(df)
 
