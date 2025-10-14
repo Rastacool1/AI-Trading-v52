@@ -1,10 +1,8 @@
-# app.py — AI Trading Edge v5.3 NeoUI • Starter Panel (33vh) + clean charts
+# app.py — AI Trading Edge v5.3 NeoUI • Starter Panel (max 33vh) + clean charts
 import streamlit as st
 import pandas as pd
 import numpy as np
-
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from core.data import from_csv, from_stooq, from_yf
 from core.signals import (
@@ -26,13 +24,14 @@ st.markdown("""
   --good:#0d5e40; --bad:#6a1b1b; --warn:#6a5d1b;
 }
 html, body, .block-container { background: var(--bg) !important; color: var(--text) !important; }
-.block-container { padding-top: 0.8rem; max-width: 1500px; }
+.block-container { padding-top: .6rem; max-width: 1500px; }
 
-/* STARTER PANEL (Top) */
-.starter-wrap { position: sticky; top: 0; z-index: 1000; backdrop-filter: blur(6px); }
-.starter { height: 33vh; min-height: 320px; background: var(--panel);
+/* STARTER PANEL (Top) — sticky bez dodatkowego wrappera */
+.starter { position: sticky; top: 0; z-index: 1000;
+  max-height: 33vh; min-height: 260px; background: var(--panel);
   border:1px solid rgba(255,255,255,.06); border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.25);
-  padding: 12px 14px; overflow: auto; }
+  padding: 12px 14px; overflow: auto; backdrop-filter: blur(6px);
+}
 .starter::-webkit-scrollbar { height: 10px; width: 10px; }
 .starter::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 10px; }
 
@@ -58,12 +57,15 @@ html, body, .block-container { background: var(--bg) !important; color: var(--te
 .rec-red{background:rgba(106,27,27,.6); border:1px solid rgba(255,0,80,.25);}
 .rec-yellow{background:rgba(106,93,27,.6); border:1px solid rgba(255,196,0,.25);}
 
-.legend-top { margin: 2px 0 8px 0; font-size: .88rem; color: var(--muted); }
+/* Better spacing on narrow viewports */
+@media (max-width: 1280px){
+  .block-container { padding-left: .6rem; padding-right: .6rem; }
+  .starter { max-height: 40vh; }
+}
 </style>
 """, unsafe_allow_html=True)
 
 # =====================  STARTER PANEL  =====================
-st.markdown("<div class='starter-wrap'>", unsafe_allow_html=True)
 st.markdown("<div class='starter'>", unsafe_allow_html=True)
 st.markdown("<div class='hdr'>⚙️ Panel startowy</div>", unsafe_allow_html=True)
 
@@ -88,9 +90,9 @@ with c2:
     p.rsi_sell   = st.slider("RSI SELL", 50, 90, p.rsi_sell)
 with c3:
     st.markdown("**Wagi & Progi**")
-    p.w_rsi      = st.slider("w_rsi", 0.0, 1.0, p.w_rsi)
-    p.w_ma       = st.slider("w_ma", 0.0, 1.0, p.w_ma)
-    p.w_bb       = st.slider("w_bb", 0.0, 1.0, p.w_bb)
+    p.w_rsi      = st.slider("w_rsi", 0.0, 1.0, 0.20)
+    p.w_ma       = st.slider("w_ma", 0.0, 1.0, 0.25)
+    p.w_bb       = st.slider("w_bb", 0.0, 1.0, 0.15)
     p.w_breakout = st.slider("w_breakout", 0.0, 1.0, 0.10)
     p.w_sent     = st.slider("w_sent", 0.0, 1.0, 0.10)
     p.percentile_mode = st.checkbox("Progi dynamiczne (percentyle)", value=True)
@@ -113,11 +115,8 @@ with a3:
     has_pos = st.checkbox("Mam już pozycję?", value=False)
 with a4:
     st.markdown("**Eksport**")
-    # placeholder na późniejszy download (wypełnimy po obliczeniach)
     dl_placeholder = st.empty()
-
 st.markdown("</div>", unsafe_allow_html=True)  # end .starter
-st.markdown("</div>", unsafe_allow_html=True)  # end .starter-wrap
 
 # =====================  DATA & SIGNALS  =====================
 if src == "CSV" and csv_file is not None:
@@ -145,39 +144,28 @@ curr_buy_thr = float(buy_thr.iloc[-1] if isinstance(buy_thr, pd.Series) else buy
 curr_sell_thr = float(sell_thr.iloc[-1] if isinstance(sell_thr, pd.Series) else sell_thr)
 
 if last_score >= curr_buy_thr:
-    action = "AKUMULUJ" if has_pos else "KUP"
-    rec_class = "rec-green"
+    action = "AKUMULUJ" if has_pos else "KUP";    rec_class = "rec-green"
 elif last_score <= curr_sell_thr:
-    action = "REDUKUJ" if has_pos else "SPRZEDAJ"
-    rec_class = "rec-red"
+    action = "REDUKUJ" if has_pos else "SPRZEDAJ"; rec_class = "rec-red"
 else:
-    action = "TRZYMAJ"
-    rec_class = "rec-yellow"
+    action = "TRZYMAJ"; rec_class = "rec-yellow"
 
-# Data for export (po obliczeniach)
-export_df = pd.DataFrame({
-    "Date": feat.index,
-    "Close": feat["Close"],
-    "RSI": feat["RSI"],
-    "Score": score,
-})
+# Export CSV
+export_df = pd.DataFrame({"Date": feat.index, "Close": feat["Close"], "RSI": feat["RSI"], "Score": score})
 export_csv = export_df.to_csv(index=False).encode("utf-8")
-with dl_placeholder:
+with dl_placeholder:  # przyciski są w panelu startowym
     st.download_button("⬇️ Pobierz sygnały (CSV)", export_csv, file_name=f"signals_{symbol.replace('^','')}.csv")
 
 # =====================  RECOMMENDATION CARD  =====================
 st.markdown(
     f"<div class='panel {rec_class}'><div class='hdr'>🧭 Rekomendacja na dziś</div>"
     f"<h2 style='margin:4px 0'>{action}</h2>"
-    f"<div class='legend-top'>Score: {last_score:.2f} • BUY_thr: {curr_buy_thr:.2f} • SELL_thr: {curr_sell_thr:.2f}</div>"
-    f"</div>",
-    unsafe_allow_html=True
+    f"<div class='subhdr'>Score: {last_score:.2f} • BUY_thr: {curr_buy_thr:.2f} • SELL_thr: {curr_sell_thr:.2f}</div>"
+    f"</div>", unsafe_allow_html=True
 )
 
-# =====================  MAIN CHART — CLEAN (PRICE + BUY/SELL ONLY)  =====================
+# =====================  MAIN CHART — PRICE + BUY/SELL ONLY  =====================
 st.markdown("<div class='panel'><div class='hdr'>📈 Wykres (tylko cena + markery sygnałów)</div>", unsafe_allow_html=True)
-
-# Quick ranges
 range_choice = st.radio("Szybki zakres", ["1M","3M","6M","YTD","1Y","3Y","MAX"], horizontal=True)
 
 def get_range_index(idx, choice):
@@ -200,8 +188,7 @@ ssel = sell_thr.loc[plot_idx] if isinstance(sell_thr, pd.Series) else pd.Series(
 
 fig_price = go.Figure()
 fig_price.add_trace(go.Scatter(x=fsel.index, y=fsel["Close"], name="Close", mode="lines"))
-buy_mask = scsel >= bsel
-sell_mask = scsel <= ssel
+buy_mask = scsel >= bsel; sell_mask = scsel <= ssel
 fig_price.add_trace(go.Scatter(x=fsel.index[buy_mask], y=fsel["Close"][buy_mask], mode="markers",
                                name="BUY", marker_symbol="triangle-up", marker_size=11))
 fig_price.add_trace(go.Scatter(x=fsel.index[sell_mask], y=fsel["Close"][sell_mask], mode="markers",
@@ -214,8 +201,7 @@ fig_price.update_layout(
 st.plotly_chart(fig_price, use_container_width=True, theme=None)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# =====================  SEPARATE INDICATOR CHARTS (no clutter)  =====================
-# 1) RSI alone
+# =====================  SEPARATE INDICATOR CHARTS  =====================
 st.markdown("<div class='panel'><div class='hdr'>RSI</div>", unsafe_allow_html=True)
 fig_rsi = go.Figure()
 fig_rsi.add_trace(go.Scatter(x=fsel.index, y=fsel["RSI"], name="RSI", mode="lines"))
@@ -225,7 +211,6 @@ fig_rsi.update_layout(height=260, margin=dict(l=40,r=20,t=10,b=10))
 st.plotly_chart(fig_rsi, use_container_width=True, theme=None)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# 2) Score with thresholds (helpful to see signals formation)
 st.markdown("<div class='panel'><div class='hdr'>Score + progi</div>", unsafe_allow_html=True)
 fig_sc = go.Figure()
 fig_sc.add_trace(go.Scatter(x=fsel.index, y=scsel, name="Score", mode="lines"))
@@ -235,7 +220,7 @@ fig_sc.update_layout(height=260, margin=dict(l=40,r=20,t=10,b=10))
 st.plotly_chart(fig_sc, use_container_width=True, theme=None)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# =====================  BACKTEST (opcjonalnie na dole)  =====================
+# =====================  BACKTEST  =====================
 st.markdown("<div class='panel'><div class='hdr'>Backtest (vol targeting) • Buy&Hold</div>", unsafe_allow_html=True)
 ret = close.pct_change().fillna(0)
 size = volatility_target_position(ret, target_vol_annual=target_vol, lookback=20)
@@ -249,7 +234,7 @@ fig_eq.update_layout(height=300, margin=dict(l=40,r=20,t=10,b=10),
                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 st.plotly_chart(fig_eq, use_container_width=True, theme=None)
 
-# =====================  AUTO-TUNE on click (wyniki pod spodem)  =====================
+# =====================  AUTO-TUNE (na żądanie)  =====================
 if do_autotune:
     st.markdown("<div class='panel'><div class='hdr'>🔁 Auto-Tune (walk-forward)</div>", unsafe_allow_html=True)
     space = grid_space()
