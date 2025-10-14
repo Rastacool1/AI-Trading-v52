@@ -4,18 +4,10 @@ import io
 import requests
 import pandas as pd
 
-# Uwaga: stooq.pl (alias .pl i .com) – lepiej trzymać .pl
+# Zostajemy przy .pl
 STOOQ_URL = "https://stooq.pl/q/d/l/?s={symbol}&i=d"
 
-# Mapy aliasów (Stooq i Yahoo)
-STOOQ_MAP = {
-    "^spx": "^spx", "spx": "^spx",
-    "^ndx": "^ndx", "ndx": "^ndx",
-    "eurusd": "eurusd",
-    "btcusd": "btcusd",
-    "btcpln": "btcpln",
-    "^vix": "^vix",
-}
+# Mapy aliasów (dla wygodnego fallbacku do Yahoo)
 YF_MAP = {
     "^spx": "^GSPC",
     "^ndx": "^NDX",
@@ -49,9 +41,7 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     close_col = _find_col(df.columns, ["close", "zamkniecie", "zamknięcie", "kurs", "price"])
 
     if not date_col or not close_col:
-        raise ValueError(
-            "CSV musi mieć kolumny Date/Data i Close/Zamkniecie (lub Kurs/Price)."
-        )
+        raise ValueError("CSV musi mieć kolumny Date/Data i Close/Zamkniecie (lub Kurs/Price).")
 
     out = df.rename(columns={date_col: "Date", close_col: "Close"})[["Date", "Close"]].copy()
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
@@ -62,7 +52,7 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def _parse_stooq_text(text: str) -> pd.DataFrame | None:
-    # Próbuj kombinacje: kodowanie x separator
+    """Próbuje sparsować treść CSV Stooq różnymi separatorami i kodowaniami."""
     encodings = ("utf-8", "cp1250", "iso-8859-2")
     seps = (";", ",", "\t")
     for enc in encodings:
@@ -73,10 +63,8 @@ def _parse_stooq_text(text: str) -> pd.DataFrame | None:
         for sep in seps:
             try:
                 df = pd.read_csv(io.StringIO(decoded), sep=sep)
-                # Stooq potrafi zwrócić jeden wielki wiersz → odfiltruj
-                if df is None or df.empty or df.shape[1] < 2:
-                    continue
-                return df
+                if df is not None and not df.empty and df.shape[1] >= 2:
+                    return df
             except Exception:
                 continue
     return None
@@ -87,48 +75,40 @@ def from_csv(file) -> pd.DataFrame:
 
 def from_stooq(symbol: str) -> pd.DataFrame:
     """
-    Czyta dane dzienne ze Stooq dla symboli takich jak:
-    btcpln, btcusd, eurusd, spx, ndx, vix.
-    Automatycznie normalizuje wielkość liter i usuwa znaki ^ / spacje.
+    Czyta dane dzienne ze Stooq. Akceptuje wpisy typu:
+    BTCPLN, btcpln, ^BTCPLN (znaki ^/= usuwane; wymuszamy lower-case).
     """
-    # 🩹 normalizacja symbolu: usunięcie ^, spacji, wymuszenie małych liter
+    # Normalizacja symbolu: usuń znaki specjalne i wymuś małe litery
     sym = symbol.strip().lower().replace("^", "").replace("/", "").replace("=", "")
-    url = f"https://stooq.pl/q/d/l/?s={sym}&i=d"
+    url = STOOQ_URL.format(symbol=sym)
 
-    import requests, io
+    # Pobierz surowy tekst CSV
     r = requests.get(url, timeout=10)
     r.raise_for_status()
     text = r.text.strip()
 
-    # sprawdzenie czy CSV jest poprawny
-    if text.startswith("<") or "brak danych" in text.lower():
-        raise ValueError(f"Stooq zwrócił HTML lub pustkę dla '{sym}' – sprawdź symbol.")
+    # Wykryj HTML/„brak danych”
+    low = text.lower()
+    if low.startswith("<") or "brak danych" in low or "error" in low:
+        raise ValueError(f"Stooq nie zwrócił poprawnego CSV dla '{sym}'.")
 
-    # próby parsowania różnych separatorów
-    for sep in (";", ","):
-        try:
-            df = pd.read_csv(io.StringIO(text), sep=sep)
-            if not df.empty:
-                return _normalize_df(df)
-        except Exception:
-            continue
+    # Spróbuj sparsować różnymi metodami
+    df = _parse_stooq_text(text)
+    if df is None:
+        # jeszcze prosty fallback na sepy bez zmiany kodowania
+        for sep in (";", ","):
+            try:
+                df = pd.read_csv(io.StringIO(text), sep=sep)
+                if not df.empty:
+                    break
+            except Exception:
+                df = None
+        if df is None or df.empty:
+            raise ValueError(f"Nie udało się sparsować CSV ze Stooq ({url}).")
 
-    raise ValueError(f"Nie udało się sparsować CSV ze Stooq ({url}).")
+    return _normalize_df(df)
 
-        return _normalize_df(df)
-
-    except Exception as e:
-        # Automatyczny fallback → Yahoo
-        yf_symbol = YF_MAP.get(symbol.lower().strip(), symbol)
-        try:
-            return from_yf(yf_symbol)
-        except Exception as e2:
-            raise ValueError(
-                f"Stooq i Yahoo nie zwróciły danych dla symbolu '{symbol}'.\n"
-                f"Stooq error: {e}\nYahoo error: {e2}"
-            )
-
-# --- Yahoo (fallback) ---
+# --- Yahoo (fallback/alternatywa) ---
 try:
     import yfinance as yf
 except Exception:
