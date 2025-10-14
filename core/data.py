@@ -1,10 +1,5 @@
-# core/data.py — Stooq (parser ręczny) + Yahoo fallback
-from __future__ import annotations
-import io
-import requests
-import pandas as pd
-
-STOOQ_URL = "https://stooq.pl/q/d/l/?s={symbol}&i=d"
+# =====================  DATA & SIGNALS  =====================
+# Bezpieczne ładowanie danych + fallback + komunikaty + podgląd URL Stooq
 
 YF_MAP = {
     "^spx": "^GSPC",
@@ -15,144 +10,71 @@ YF_MAP = {
     "eurusd": "EURUSD=X",
 }
 
-def _find_col(cols: list[str], candidates: list[str]) -> str | None:
-    def norm(s: str) -> str:
-        return (
-            str(s).strip().lower()
-            .replace("ą","a").replace("ć","c").replace("ę","e").replace("ł","l")
-            .replace("ń","n").replace("ó","o").replace("ś","s").replace("ź","z").replace("ż","z")
-        )
-    lookup = {norm(c): c for c in cols}
-    for cand in candidates:
-        k = norm(cand)
-        if k in lookup:
-            return lookup[k]
-    return None
+def stooq_url_preview(sym: str) -> str:
+    # dokładnie tak samo normalizujemy jak w core/data.py
+    sym_norm = sym.strip().lower().replace("^", "").replace("/", "").replace("=", "")
+    return f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
 
-def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        raise ValueError("Pusty zestaw danych – sprawdź symbol lub źródło.")
-    df.columns = [str(c).strip() for c in df.columns]
+# mały tester źródła w panelu
+with st.expander("🔎 Diagnostyka źródła danych", expanded=False):
+    st.write("Symbol wpisany:", f"`{symbol}`")
+    st.write("Podgląd URL (Stooq):", stooq_url_preview(symbol))
+    st.caption("Jeśli Stooq zwróci HTML/„Brak danych”, nastąpi automat. fallback do Yahoo (mapa aliasów wyżej).")
 
-    date_col  = _find_col(df.columns, ["date", "data"])
-    close_col = _find_col(df.columns, ["close", "zamkniecie", "zamknięcie", "kurs", "price"])
+def safe_load_data(src_choice: str, symbol_in: str, file_obj):
+    symbol_norm = symbol_in.strip()
+    # 1) CSV (lokalny plik)
+    if src_choice == "CSV":
+        if file_obj is None:
+            st.warning("Wybierz plik CSV (kolumny: Date/Data, Close/Zamkniecie).")
+            return None, "CSV"
+        try:
+            df = from_csv(file_obj)
+            return df, "CSV"
+        except Exception as e:
+            st.error(f"Nie udało się wczytać CSV: {e}")
+            return None, "CSV"
 
-    if not date_col or not close_col:
-        raise ValueError("CSV musi mieć kolumny Date/Data i Close/Zamkniecie (lub Kurs/Price).")
+    # 2) Stooq (pierwszy wybór) z miękkim fallbackiem do Yahoo
+    if src_choice == "Stooq":
+        try:
+            df = from_stooq(symbol_norm)
+            return df, "Stooq"
+        except Exception as e_stq:
+            yf_sym = YF_MAP.get(symbol_norm.lower(), symbol_norm)
+            st.info(f"Stooq nie zadziałał: {e_stq}\nPróbuję Yahoo: `{yf_sym}`")
+            try:
+                df = from_yf(yf_sym)
+                return df, f"Yahoo ({yf_sym})"
+            except Exception as e_yf:
+                st.error(
+                    "❌ Nie udało się pobrać danych ani ze Stooq, ani z Yahoo.\n\n"
+                    f"Stooq: {e_stq}\nYahoo: {e_yf}\n\n"
+                    "➡️ Zmień symbol/źródło albo wgraj własny CSV."
+                )
+                return None, "Error"
 
-    out = df.rename(columns={date_col: "Date", close_col: "Close"})[["Date", "Close"]].copy()
+    # 3) Yahoo (bezpośrednio)
+    if src_choice == "Yahoo":
+        yf_sym = YF_MAP.get(symbol_norm.lower(), symbol_norm)
+        try:
+            df = from_yf(yf_sym)
+            return df, f"Yahoo ({yf_sym})"
+        except Exception as e_yf:
+            st.error(f"Yahoo zwróciło błąd dla `{yf_sym}`: {e_yf}. Spróbuj Stooq lub wgraj CSV.")
+            return None, "Yahoo"
 
-    # Tolerancja na przecinek jako separator dziesiętny
-    out["Close"] = (
-        out["Close"].astype(str).str.replace(",", ".", regex=False)
-    )
+    st.error("Nieznane źródło danych.")
+    return None, "Unknown"
 
-    out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
-    out["Close"] = pd.to_numeric(out["Close"], errors="coerce")
-    out = out.dropna().sort_values("Date").set_index("Date")
-    if out.empty:
-        raise ValueError("Po normalizacji brak danych (nieparsowalne wartości).")
-    return out
+df, used_source = safe_load_data(src, symbol, csv_file)
+if df is None or df.empty:
+    st.stop()
 
-def _parse_stooq_semicolon(text: str) -> pd.DataFrame | None:
-    """
-    Ręczny parser CSV Stooq (separator ';', nagłówki PL np. Data;Otwarcie;...;Zamknięcie;Wolumen).
-    Odrzuca puste/niepełne wiersze, usuwa BOM i białe znaki.
-    """
-    if not text or "<html" in text.lower():
-        return None
+# krótka metryka diagnostyczna
+with st.expander("ℹ️ Informacja o danych", expanded=False):
+    st.write("Źródło użyte:", used_source)
+    st.write("Liczba rekordów:", len(df))
+    st.write("Zakres dat:", f"{df.index.min().date()} → {df.index.max().date()}")
 
-    # Usuń ewentualny BOM
-    if text[:1] == "\ufeff":
-        text = text.lstrip("\ufeff")
-
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return None
-
-    header = lines[0]
-    if ";" not in header:
-        return None
-
-    cols = [c.strip() for c in header.split(";")]
-    rows = []
-    for ln in lines[1:]:
-        parts = [p.strip() for p in ln.split(";")]
-        if len(parts) != len(cols):
-            # sporadyczne puste/ucięte linie — pomijamy
-            continue
-        rows.append(parts)
-
-    if not rows:
-        return None
-
-    df = pd.DataFrame(rows, columns=cols)
-    return df
-
-def from_csv(file) -> pd.DataFrame:
-    df = pd.read_csv(file)
-    return _normalize_df(df)
-
-def from_stooq(symbol: str) -> pd.DataFrame:
-    """
-    Czyta dane dzienne ze Stooq.
-    Normalizacja: usuwa ^ / = i wymusza lower-case (np. '^BTCPLN' -> 'btcpln').
-    """
-    sym = symbol.strip().lower().replace("^", "").replace("/", "").replace("=", "")
-    url = STOOQ_URL.format(symbol=sym)
-
-    # Pobierz surowy tekst CSV (z nagłówkiem UA dla pewności)
-    r = requests.get(
-        url, timeout=10,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "text/csv,*/*;q=0.9",
-        },
-    )
-    r.raise_for_status()
-    text = r.text.strip()
-
-    # Wykryj HTML/komunikaty
-    low = text.lower()
-    if low.startswith("<") or "brak danych" in low or "error" in low:
-        raise ValueError(f"Stooq nie zwrócił poprawnego CSV dla '{sym}'.")
-
-    # 1) Parser ręczny dla typowego formatu Stooq (;)
-    df = _parse_stooq_semicolon(text)
-
-    # 2) Jeśli ręczny parser nie zadziałał, spróbuj pandas z kilkoma wariantami
-    if df is None or df.empty:
-        for enc in ("utf-8", "cp1250", "iso-8859-2"):
-            for sep in (";", ",", "\t"):
-                try:
-                    decoded = text.encode("utf-8", errors="ignore").decode(enc, errors="ignore")
-                    tmp = pd.read_csv(io.StringIO(decoded), sep=sep)
-                    if tmp is not None and not tmp.empty and tmp.shape[1] >= 2:
-                        df = tmp
-                        break
-                except Exception:
-                    continue
-            if df is not None:
-                break
-
-    if df is None or df.empty:
-        raise ValueError(f"Nie udało się sparsować CSV ze Stooq ({url}).")
-
-    return _normalize_df(df)
-
-# --- Yahoo (fallback/alternatywa) ---
-try:
-    import yfinance as yf
-except Exception:
-    yf = None
-
-def from_yf(symbol: str, period: str = "max") -> pd.DataFrame:
-    if yf is None:
-        raise RuntimeError("yfinance nie jest zainstalowany.")
-    data = yf.download(symbol, period=period, interval="1d", auto_adjust=True, progress=False)
-    if data is None or data.empty:
-        raise ValueError(f"Yahoo: brak danych dla symbolu '{symbol}'.")
-    data = data[["Close"]].dropna()
-    data.index = pd.to_datetime(data.index)
-    data.index.name = "Date"
-    return data
+close = df["Close"].dropna()
