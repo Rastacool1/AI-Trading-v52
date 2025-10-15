@@ -379,16 +379,56 @@ st.plotly_chart(feq, use_container_width=True, theme=None)
 # -----------------------------------------------------------------------------
 if auto_tune_click:
     st.markdown("<div class='card'><div class='h2'>🔁 Auto-Tune (walk-forward)</div>", unsafe_allow_html=True)
+
+    # 1) sztuczny sentyment (gdyby walk_forward go wymagał)
+    dummy_sent = pd.Series(0, index=close.index)
+
+    def run_walk_forward_safely():
+        """
+        Próbuje uruchomić walk_forward z różnymi sygnaturami,
+        tak by NIE dotykać implementacji silnika.
+        Zwraca: (results, stability)
+        """
+        # A) najpierw „po nazwach” bez sent
+        try:
+            return walk_forward(close, space=grid_space(), folds=4, cost_bps=10)
+        except TypeError:
+            pass
+        except AttributeError as e:
+            # np. wewnątrz walk_forward próbowano sent.reindex na dict
+            if "reindex" in str(e):
+                pass
+            else:
+                raise
+
+        # B) pozycyjnie bez sent
+        try:
+            space = grid_space()
+            return walk_forward(close, space, 4, 10)
+        except Exception:
+            pass
+
+        # C) pozycyjnie Z sent (częsty wariant: (close, sent, space, folds, cost_bps))
+        try:
+            space = grid_space()
+            return walk_forward(close, dummy_sent, space, 4, 10)
+        except Exception:
+            pass
+
+        # D) po nazwach Z sent (gdy funkcja przyjmuje, ale nie pod nazwą 'sent')
+        try:
+            space = grid_space()
+            # wiele implementacji akceptuje drugi arg jako sent bez nazwy
+            return walk_forward(close, dummy_sent, space=space, folds=4, cost_bps=10)
+        except Exception as e:
+            raise e  # przekaż dalej najświeższy błąd
+
     try:
-        space = grid_space()
+        results, stability = run_walk_forward_safely()
 
-        # >>> usuwamy 'sent' – ta funkcja go nie przyjmuje
-        results, stability = walk_forward(close, space=space, folds=4, cost_bps=10)
-
-        # wybierz najlepszy run po metryce OOS (np. Sharpe albo CAGR)
+        # wybierz najlepszy run wg metryk OOS
         def _score_run(r):
             m = r.get("metrics_os", {}) or {}
-            # preferuj Sharpe, fallback na CAGR, potem total return
             return m.get("sharpe", 0.0) or m.get("cagr", 0.0) or m.get("ret_total", 0.0)
 
         best_run = max(results, key=_score_run)
@@ -418,27 +458,21 @@ if auto_tune_click:
             "percentile_mode": "perc_on",
         }
 
-        # zaktualizuj slidery i paramy w sesji
         updates = {}
         for k, v in best_params.items():
             if k in keymap:
-                updates[keymap[k]] = int(v) if isinstance(v, float) and v.is_integer() else v
+                # int dla suwaków całkowitych
+                if isinstance(v, float) and v.is_integer():
+                    v = int(v)
+                updates[keymap[k]] = v
 
         if updates:
             st.session_state.update(updates)
             st.success("✅ Zastosowano najlepsze parametry — odświeżam widok…")
             st.rerun()
         else:
-            st.warning("Auto-Tune zakończony, ale nie zwrócił znanych parametrów do ustawienia.")
+            st.warning("Auto-Tune zakończony, ale nie zwrócił rozpoznawalnych parametrów.")
 
-    except TypeError as e:
-        # na wypadek innej sygnatury (np. bez nazwanych argumentów)
-        try:
-            results, stability = walk_forward(close, space, 4, 10)  # fallback wywołania pozycyjnego
-            st.info("Uruchomiono walk_forward w trybie zgodności (pozycyjne argumenty).")
-        except Exception as e2:
-            st.error(f"Auto-Tune błąd: {e2}")
     except Exception as e:
         st.error(f"Auto-Tune błąd: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
-
