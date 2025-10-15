@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from core.data import from_csv, from_stooq, from_yf
+from core.data import from_csv, from_stooq
 from core.signals import (
     SignalParams, compute_features, partial_signals,
     ensemble_score, dynamic_thresholds, confidence_and_explain
