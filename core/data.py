@@ -28,57 +28,67 @@ def _build_stooq_url(symbol: str) -> str:
     return f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
 
 
+# --- w core/data.py ---
+
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Ujednolica do indeksu 'Date' i kolumny 'Close'.
-    Obsługuje PL/EN nagłówki oraz fallback pozycyjny (kol.0=Date, kol.4=Close; w ostateczności ostatnia kolumna=Close).
+    Obsługuje PL/EN nagłówki, skróty (np. 'Zamk.'), oraz fallback pozycyjny.
     """
     if df is None or df.empty:
         raise ValueError("Pusty DataFrame.")
 
+    # ujednolicenie
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Mapuj datę
-    if "Date" not in df.columns and "Data" in df.columns:
-        df = df.rename(columns={"Data": "Date"})
+    # mapowanie daty
+    date_col = None
+    for cand in ("Date", "Data"):
+        if cand in df.columns:
+            date_col = cand
+            break
 
-    # Znajdź 'Close' (różne warianty)
+    # możliwe warianty 'Close'
+    close_candidates = (
+        "Close", "Zamkniecie", "Zamknięcie", "Zamkn.", "Zamk", "Kurs", "Price"
+    )
     close_col = None
-    for cand in ("Close", "Zamkniecie", "Zamknięcie", "Kurs", "Price"):
+    for cand in close_candidates:
         if cand in df.columns:
             close_col = cand
             break
 
-    # Fallback pozycyjny — typowy CSV Stooq:
-    # Data;Otwarcie;Najwyzszy;Najnizszy;Zamkniecie;Wolumen
-    if close_col is None and df.shape[1] >= 5:
-        df = df.rename(columns={df.columns[0]: "Date", df.columns[4]: "Close"})
-        close_col = "Close"
+    # fallback pozycyjny: 0=Date, 4=Close (typowy układ Stooq)
+    if (date_col is None or close_col is None) and df.shape[1] >= 5:
+        if date_col is None:
+            date_col = df.columns[0]
+        if close_col is None:
+            close_col = df.columns[4]
 
-    # Ostatnia deska ratunku: jeśli >=2 kolumn, weź 0=Date, -1=Close
-    if (close_col is None or "Date" not in df.columns) and df.shape[1] >= 2:
-        df = df.rename(columns={df.columns[0]: "Date", df.columns[-1]: "Close"})
-        close_col = "Close"
+    # ostatnia deska: 0=Date, -1=Close
+    if (date_col is None or close_col is None) and df.shape[1] >= 2:
+        date_col = date_col or df.columns[0]
+        close_col = close_col or df.columns[-1]
 
-    if close_col is None or "Date" not in df.columns:
-        raise ValueError("Brak kolumn Date/Close w danych.")
+    if date_col is None or close_col is None:
+        raise ValueError(f"Brak kolumn Date/Close w danych. Kolumny: {list(df.columns)}")
 
+    # standaryzuj nazwy
+    if date_col != "Date":
+        df = df.rename(columns={date_col: "Date"})
     if close_col != "Close":
         df = df.rename(columns={close_col: "Close"})
 
-    # Liczby: kropka jako separator dziesiętny (jeśli przyjdzie przecinek – zamień)
-    # (Uwaga: w datach '-' i w liczbach '.' NIE są separatorami CSV)
-    df["Close"] = pd.to_numeric(
-        df["Close"].astype(str).str.replace(",", ".", regex=False),
-        errors="coerce",
-    )
-    # Daty
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
+    # numery i daty
+    df["Close"] = pd.to_numeric(df["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    df["Date"]  = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
 
     df = df.dropna(subset=["Date", "Close"]).sort_values("Date").set_index("Date")
     if df.empty:
         raise ValueError("Po normalizacji brak danych.")
     return df[["Close"]]
+
+
 
 
 def _sniff_sep(sample: str) -> Optional[str]:
@@ -154,19 +164,23 @@ def _manual_parse(text: str) -> Optional[pd.DataFrame]:
 # public api
 # =========================
 
-def from_stooq(symbol: str) -> pd.DataFrame:
+def from_stooq(symbol: str, forced_sep: str | None = None) -> pd.DataFrame:
     """
     Pobierz dzienne notowania ze Stooq i zwróć DataFrame [Date index, Close].
-    Zero fallbacków do innych źródeł.
-
-    Kolejność prób:
-      (A) pd.read_csv(URL, sep=None, engine='python')  # autodetekcja
-      (B) requests + parsowanie tekstu (sniffer + sepy) i alternatywne kodowania
-      (C) ręczny parser + fallback pozycyjny kolumn
+    Opcjonalnie można wymusić separator: ',', ';' lub '\\t'.
     """
     url = _build_stooq_url(symbol)
 
-    # (A) Najprościej — pozwól pandasowi samemu wykryć separator
+    # (A) jeśli wymuszono separator — spróbuj od razu tym trybem
+    if forced_sep:
+        try:
+            df_direct = pd.read_csv(url, sep=forced_sep, engine="python")
+            if df_direct is not None and not df_direct.empty and df_direct.shape[1] >= 2:
+                return _normalize_df(df_direct)
+        except Exception:
+            pass  # przejdź do ogólnych prób
+
+    # (B) autodetekcja Pandas
     try:
         df_direct = pd.read_csv(url, sep=None, engine="python")
         if df_direct is not None and not df_direct.empty and df_direct.shape[1] >= 2:
@@ -174,7 +188,7 @@ def from_stooq(symbol: str) -> pd.DataFrame:
     except Exception:
         pass
 
-    # (B) Pobierz zawartość i probuj różne dekodowania + sepy
+    # (C) pobierz treść i próbuj ręcznie
     try:
         resp = requests.get(
             url,
@@ -194,30 +208,46 @@ def from_stooq(symbol: str) -> pd.DataFrame:
 
     raw = resp.content or b""
     text = (resp.text or "").strip()
-
-    # Jeżeli HTML/pustka — nic nie zrobimy (bez innych źródeł).
     if not raw or not text or text.lstrip().startswith("<"):
         raise ValueError(f"Stooq: pusty/HTML-owy response ({url}).")
 
-    # Próby na oryginalnym tekście
-    df = _try_read_text(text)
-    if df is not None:
-        return _normalize_df(df)
+    # (C1) prosto z tekstu
+    if forced_sep:
+        try:
+            df = pd.read_csv(io.StringIO(text), sep=forced_sep, engine="python")
+            if df is not None and not df.empty and df.shape[1] >= 2:
+                return _normalize_df(df)
+        except Exception:
+            pass
+    else:
+        df = _try_read_text(text)
+        if df is not None:
+            return _normalize_df(df)
 
-    # Alternatywne dekodowania
+    # (C2) alternatywne kodowania
     for enc in ("utf-8-sig", "cp1250", "iso-8859-2"):
         try:
             decoded = raw.decode(enc, errors="ignore")
         except Exception:
             continue
-        df = _try_read_text(decoded)
-        if df is not None:
-            return _normalize_df(df)
+
+        if forced_sep:
+            try:
+                df = pd.read_csv(io.StringIO(decoded), sep=forced_sep, engine="python")
+                if df is not None and not df.empty and df.shape[1] >= 2:
+                    return _normalize_df(df)
+            except Exception:
+                pass
+        else:
+            df = _try_read_text(decoded)
+            if df is not None:
+                return _normalize_df(df)
+
         manual = _manual_parse(decoded)
         if manual is not None and not manual.empty:
             return _normalize_df(manual)
 
-    # Ostatnia próba na oryginalnym tekście
+    # (C3) ostatnia próba: manual na oryginalnym tekście
     manual = _manual_parse(text)
     if manual is not None and not manual.empty:
         return _normalize_df(manual)
