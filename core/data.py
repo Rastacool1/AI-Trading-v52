@@ -1,80 +1,74 @@
-# =====================  DATA & SIGNALS  =====================
-# Bezpieczne ładowanie danych + fallback + komunikaty + podgląd URL Stooq
+# core/data.py — stabilny reader Stooq (jak w v4.4.2) + Yahoo
+from __future__ import annotations
+import io
+import requests
+import pandas as pd
 
-YF_MAP = {
-    "^spx": "^GSPC",
-    "^ndx": "^NDX",
-    "^vix": "^VIX",
-    "btcusd": "BTC-USD",
-    "btcpln": "BTC-PLN",
-    "eurusd": "EURUSD=X",
-}
+def from_stooq(symbol: str) -> pd.DataFrame:
+    """
+    Stabilny reader Stooq — działa dla symboli typu btcpln, eurusd, spx itd.
+    Zawsze normalizuje symbol: usuwa ^ / = i wymusza lower-case.
+    """
+    sym = symbol.strip().lower().replace("^", "").replace("/", "").replace("=", "")
+    url = f"https://stooq.pl/q/d/l/?s={sym}&i=d"
 
-def stooq_url_preview(sym: str) -> str:
-    # dokładnie tak samo normalizujemy jak w core/data.py
-    sym_norm = sym.strip().lower().replace("^", "").replace("/", "").replace("=", "")
-    return f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+    r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    text = r.text.strip()
 
-# mały tester źródła w panelu
-with st.expander("🔎 Diagnostyka źródła danych", expanded=False):
-    st.write("Symbol wpisany:", f"`{symbol}`")
-    st.write("Podgląd URL (Stooq):", stooq_url_preview(symbol))
-    st.caption("Jeśli Stooq zwróci HTML/„Brak danych”, nastąpi automat. fallback do Yahoo (mapa aliasów wyżej).")
+    # wykrycie HTML lub komunikatu
+    low = text.lower()
+    if low.startswith("<") or "brak danych" in low or "error" in low:
+        raise ValueError(f"Brak danych dla symbolu '{sym}' w Stooq ({url})")
 
-def safe_load_data(src_choice: str, symbol_in: str, file_obj):
-    symbol_norm = symbol_in.strip()
-    # 1) CSV (lokalny plik)
-    if src_choice == "CSV":
-        if file_obj is None:
-            st.warning("Wybierz plik CSV (kolumny: Date/Data, Close/Zamkniecie).")
-            return None, "CSV"
-        try:
-            df = from_csv(file_obj)
-            return df, "CSV"
-        except Exception as e:
-            st.error(f"Nie udało się wczytać CSV: {e}")
-            return None, "CSV"
+    # Stooq używa ';' i PL nagłówków (Data, Zamkniecie)
+    df = pd.read_csv(io.StringIO(text), sep=";")
 
-    # 2) Stooq (pierwszy wybór) z miękkim fallbackiem do Yahoo
-    if src_choice == "Stooq":
-        try:
-            df = from_stooq(symbol_norm)
-            return df, "Stooq"
-        except Exception as e_stq:
-            yf_sym = YF_MAP.get(symbol_norm.lower(), symbol_norm)
-            st.info(f"Stooq nie zadziałał: {e_stq}\nPróbuję Yahoo: `{yf_sym}`")
-            try:
-                df = from_yf(yf_sym)
-                return df, f"Yahoo ({yf_sym})"
-            except Exception as e_yf:
-                st.error(
-                    "❌ Nie udało się pobrać danych ani ze Stooq, ani z Yahoo.\n\n"
-                    f"Stooq: {e_stq}\nYahoo: {e_yf}\n\n"
-                    "➡️ Zmień symbol/źródło albo wgraj własny CSV."
-                )
-                return None, "Error"
+    if "Data" not in df.columns or ("Zamkniecie" not in df.columns and "Zamknięcie" not in df.columns):
+        raise ValueError("Nie znaleziono kolumn Data/Zamkniecie w pliku ze Stooq.")
 
-    # 3) Yahoo (bezpośrednio)
-    if src_choice == "Yahoo":
-        yf_sym = YF_MAP.get(symbol_norm.lower(), symbol_norm)
-        try:
-            df = from_yf(yf_sym)
-            return df, f"Yahoo ({yf_sym})"
-        except Exception as e_yf:
-            st.error(f"Yahoo zwróciło błąd dla `{yf_sym}`: {e_yf}. Spróbuj Stooq lub wgraj CSV.")
-            return None, "Yahoo"
+    # tolerancja na diakrytyk w 'Zamknięcie'
+    if "Zamkniecie" in df.columns:
+        close_col = "Zamkniecie"
+    else:
+        close_col = "Zamknięcie"
 
-    st.error("Nieznane źródło danych.")
-    return None, "Unknown"
+    df = df.rename(columns={"Data": "Date", close_col: "Close"})
+    # zamiana przecinka na kropkę gdyby się zdarzył
+    df["Close"] = df["Close"].astype(str).str.replace(",", ".", regex=False)
 
-df, used_source = safe_load_data(src, symbol, csv_file)
-if df is None or df.empty:
-    st.stop()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
+    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+    df = df.dropna().sort_values("Date").set_index("Date")
+    return df[["Close"]]
 
-# krótka metryka diagnostyczna
-with st.expander("ℹ️ Informacja o danych", expanded=False):
-    st.write("Źródło użyte:", used_source)
-    st.write("Liczba rekordów:", len(df))
-    st.write("Zakres dat:", f"{df.index.min().date()} → {df.index.max().date()}")
+def from_csv(file) -> pd.DataFrame:
+    df = pd.read_csv(file)
+    df.columns = [c.strip() for c in df.columns]
+    if "Date" not in df.columns and "Data" in df.columns:
+        df = df.rename(columns={"Data": "Date"})
+    if "Close" not in df.columns and "Zamkniecie" in df.columns:
+        df = df.rename(columns={"Zamkniecie": "Close"})
+    if "Close" not in df.columns and "Zamknięcie" in df.columns:
+        df = df.rename(columns={"Zamknięcie": "Close"})
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
+    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+    df = df.dropna().sort_values("Date").set_index("Date")
+    return df[["Close"]]
 
-close = df["Close"].dropna()
+# Yahoo (alternatywa / fallback)
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+def from_yf(symbol: str, period: str = "max") -> pd.DataFrame:
+    if yf is None:
+        raise RuntimeError("yfinance nie jest zainstalowany.")
+    data = yf.download(symbol, period=period, interval="1d", auto_adjust=True, progress=False)
+    if data is None or data.empty:
+        raise ValueError(f"Yahoo: brak danych dla symbolu '{symbol}'.")
+    data = data[["Close"]].dropna()
+    data.index = pd.to_datetime(data.index)
+    data.index.name = "Date"
+    return data
