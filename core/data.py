@@ -1,7 +1,8 @@
-# core/data.py — ONLY Stooq + CSV (robust, minimal dependencies)
+# core/data.py — ONLY Stooq + CSV (robust)
 from __future__ import annotations
 
 import io
+import time
 from typing import Optional, Iterable
 
 import pandas as pd
@@ -16,13 +17,7 @@ __all__ = ["from_stooq", "from_csv"]
 # =========================
 
 def _build_stooq_url(symbol: str) -> str:
-    """
-    Znormalizuj ticker i zbuduj URL do dziennych notowań na Stooq.
-    Przykłady:
-      'BTCPLN'  -> https://stooq.pl/q/d/l/?s=btcpln&i=d
-      '^spx'    -> https://stooq.pl/q/d/l/?s=spx&i=d
-      ' eurusd' -> https://stooq.pl/q/d/l/?s=eurusd&i=d
-    """
+    """Znormalizuj ticker i zbuduj URL do dziennych notowań na Stooq."""
     sym = (
         symbol.strip()
         .lower()
@@ -30,14 +25,12 @@ def _build_stooq_url(symbol: str) -> str:
         .replace("/", "")
         .replace("=", "")
     )
-    return f"https://stooq.pl/q/d/l/?s={sym}&i=d"
+    # cache-buster (unikamy zwrotki z cache CDN)
+    return f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
 
 
 def _try_read_csv_text(text: str, seps: Iterable[str]) -> Optional[pd.DataFrame]:
-    """
-    Spróbuj sparsować CSV z gotowego tekstu różnymi separatorami.
-    Zwraca DataFrame albo None.
-    """
+    """Spróbuj sparsować CSV z gotowego tekstu różnymi separatorami."""
     for sep in seps:
         try:
             df = pd.read_csv(io.StringIO(text), sep=sep)
@@ -49,15 +42,11 @@ def _try_read_csv_text(text: str, seps: Iterable[str]) -> Optional[pd.DataFrame]
 
 
 def _parse_semicolon_manual(text: str) -> Optional[pd.DataFrame]:
-    """
-    „Ręczny” parser CSV oparty na średnikach — toleruje:
-    - BOM (UTF-8-SIG),
-    - dodatkowe średniki na końcu,
-    - mieszane końce linii (\r\n / \n / \r),
-    - puste wartości.
-    Zwraca DataFrame albo None.
-    """
-    if not text or "<html" in text.lower():
+    """Ręczny parser CSV oparty na separatorze (toleruje ; i ,), BOM, CRLF."""
+    if not text:
+        return None
+    low = text.lower()
+    if "<html" in low:
         return None
 
     text = text.lstrip("\ufeff")  # BOM
@@ -67,13 +56,15 @@ def _parse_semicolon_manual(text: str) -> Optional[pd.DataFrame]:
         return None
 
     header = lines[0]
-    if ";" not in header:
+    # wykryj separator z nagłówka
+    sep = ";" if ";" in header else ("," if "," in header else None)
+    if sep is None:
         return None
 
-    cols = [c.strip() for c in header.split(";")]
+    cols = [c.strip() for c in header.split(sep)]
     rows = []
     for ln in lines[1:]:
-        parts = [p.strip() for p in ln.split(";")]
+        parts = [p.strip() for p in ln.split(sep)]
         # dopasuj długość wiersza do liczby kolumn nagłówka
         if len(parts) < len(cols):
             parts += [""] * (len(cols) - len(parts))
@@ -89,19 +80,18 @@ def _parse_semicolon_manual(text: str) -> Optional[pd.DataFrame]:
 
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Ujednolica DataFrame do formatu z kolumnami:
-    - Date (index po normalizacji),
-    - Close (kolumna numeryczna).
-    Obsługuje nagłówki PL/EN oraz fallback pozycyjny, gdy nagłówków brak/spięte.
+    Ujednolica DataFrame do formatu:
+    - index = Date
+    - kolumna 'Close'
+    Obsługuje nagłówki PL/EN + fallback pozycyjny.
     """
-    # ujednolicenie nagłówków
     df.columns = [str(c).strip() for c in df.columns]
 
-    # mapowanie kolumn daty
+    # mapowanie nazwy daty
     if "Date" not in df.columns and "Data" in df.columns:
         df = df.rename(columns={"Data": "Date"})
 
-    # wyszukanie kolumny close (z tolerancją PL diakrytyk)
+    # znajdź kolumnę Close (różne warianty)
     close_col = None
     for cand in ("Close", "Zamkniecie", "Zamknięcie", "Kurs", "Price"):
         if cand in df.columns:
@@ -110,7 +100,6 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
 
     # fallback pozycyjny dla klasycznego CSV Stooq:
     # Data;Otwarcie;Najwyzszy;Najnizszy;Zamkniecie;Wolumen
-    # kol. 0 -> Data, kol. 4 -> Zamkniecie
     if close_col is None and df.shape[1] >= 5:
         df = df.rename(columns={df.columns[0]: "Date", df.columns[4]: "Close"})
         close_col = "Close"
@@ -126,10 +115,8 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
         df["Close"].astype(str).str.replace(",", ".", regex=False),
         errors="coerce",
     )
-    # daty
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.tz_localize(None)
 
-    # sprzątanie i ustawienie indeksu
     df = df.dropna(subset=["Date", "Close"]).sort_values("Date").set_index("Date")
     if df.empty:
         raise ValueError("Po normalizacji brak danych.")
@@ -143,31 +130,33 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
 def from_stooq(symbol: str) -> pd.DataFrame:
     """
     Pobierz dzienne notowania ze Stooq i zwróć DataFrame z kolumną 'Close' i indeksem 'Date'.
-    Zero fallbacków do innych źródeł — tylko Stooq.
-
+    Tylko Stooq (bez Yahoo).
     Strategia:
-      1) Bezpośrednio: pd.read_csv(URL, sep=';')
-      2) requests -> dekodowanie (utf-8-sig / cp1250 / iso-8859-2) -> próby sep ('; ', ';', ',', '\\t')
-      3) ręczny parser po ';' z dopasowaniem kolumn
+      1) pd.read_csv(URL, sep=';')  — najczęstszy przypadek Stooq
+      2) requests z UA/Referer + próby separatorów ('; ', ';', ',', '\\t') na tekście i alternatywnych dekodowaniach
+      3) ręczny parser z autodetekcją ;/, i fallback pozycyjny kolumn
     """
     url = _build_stooq_url(symbol)
 
-    # 1) najpierw spróbuj najprostszą ścieżką (często wystarcza)
+    # (1) Najprościej – często wystarcza (dla plików .; )
     try:
-        df = pd.read_csv(url, sep=";")
-        if df is not None and not df.empty and df.shape[1] >= 2:
-            return _normalize_df(df)
+        df_direct = pd.read_csv(url, sep=";")
+        if df_direct is not None and not df_direct.empty and df_direct.shape[1] >= 2:
+            return _normalize_df(df_direct)
     except Exception:
         pass
 
-    # 2) pobierz treść i próbuj różne kodowania + sepy
+    # (2) Pobierz treść z nagłówkami, bez agresywnej heurystyki 'error'
     try:
         resp = requests.get(
             url,
             timeout=12,
             headers={
                 "User-Agent": "Mozilla/5.0",
-                "Accept": "text/csv,*/*;q=0.9",
+                "Accept": "text/csv,text/plain,*/*;q=0.9",
+                "Referer": "https://stooq.pl/",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
                 "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.8",
             },
         )
@@ -179,16 +168,16 @@ def from_stooq(symbol: str) -> pd.DataFrame:
     text = (resp.text or "").strip()
     low = text.lower() if text else ""
 
-    # puste ciało/HTML/komunikat serwera
-    if not raw or not text or low.startswith("<") or "brak danych" in low or "error" in low:
+    # UZNAJEMY HTML tylko gdy zaczyna się od '<' albo zawiera tag HTML — samo słowo 'error' nas nie obchodzi
+    if not raw or not text or low.startswith("<") or "<html" in low:
         raise ValueError(f"Stooq: pusty/HTML-owy response ({url}).")
 
-    # 2a) próby bezpośrednio na oryginalnym tekście
+    # próby bezpośrednio na oryginalnym tekście: ; , \t
     df = _try_read_csv_text(text, seps=("; ", ";", ",", "\t"))
     if df is not None:
         return _normalize_df(df)
 
-    # 2b) próby po innych dekodowaniach
+    # alternatywne dekodowania (utf-8-sig / cp1250 / iso-8859-2)
     for enc in ("utf-8-sig", "cp1250", "iso-8859-2"):
         try:
             decoded = raw.decode(enc, errors="ignore")
@@ -198,7 +187,6 @@ def from_stooq(symbol: str) -> pd.DataFrame:
         if df is not None:
             return _normalize_df(df)
 
-        # 3) ręczny parser średnikowy
         manual = _parse_semicolon_manual(decoded)
         if manual is not None and not manual.empty:
             return _normalize_df(manual)
@@ -214,7 +202,29 @@ def from_stooq(symbol: str) -> pd.DataFrame:
 def from_csv(file) -> pd.DataFrame:
     """
     Wczytaj lokalny CSV (upload z UI) i znormalizuj do [Date, Close].
-    Akceptuje polskie nagłówki (Data/Zamknięcie/Zamkniecie).
+    Autodetekcja separatora (',' lub ';').
     """
-    df = pd.read_csv(file)
-    return _normalize_df(df)
+    # próbuj standardowo, jak nie — spróbuj alternatywnego separatora
+    try:
+        df = pd.read_csv(file)  # pandas zwykle autodetekuje ','
+        if df is not None and not df.empty:
+            return _normalize_df(df)
+    except Exception:
+        pass
+
+    # fallback: spróbuj średnika
+    file.seek(0)
+    try:
+        text = file.read()
+        if isinstance(text, bytes):
+            try:
+                text = text.decode("utf-8-sig")
+            except Exception:
+                text = text.decode("cp1250", errors="ignore")
+        df2 = _try_read_csv_text(text, seps=("; ", ";", ",", "\t"))
+        if df2 is not None:
+            return _normalize_df(df2)
+    except Exception:
+        pass
+
+    raise ValueError("Nie udało się odczytać CSV (spróbuj innym separatorem lub poprawić nagłówki).")
