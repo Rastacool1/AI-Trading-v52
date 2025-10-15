@@ -144,11 +144,13 @@ with left:
                     st.session_state.data_ok = True
                     st.success(f"✅ Wczytano dane z CSV: {len(_df)} wierszy.")
             else:  # Stooq
-                _df = from_stooq(symbol)
+                forced = None if sep_choice == "Auto" else ("\t" if sep_choice == "\\t" else sep_choice)
+                _df = from_stooq(symbol, forced_sep=forced)
                 st.session_state.df = _df
                 st.session_state.used_source = "Stooq"
                 st.session_state.data_ok = True
                 st.success(f"✅ Pobranie OK ze Stooq: {len(_df)} wierszy.")
+
         except Exception as e:
             st.session_state.data_ok = False
             st.session_state.df = None
@@ -166,6 +168,22 @@ with left:
         with cB:
             st.write(f"Zakres: **{_df.index.min().date()} → {_df.index.max().date()}**")
             st.write(f"Ostatnie Close: **{float(_df['Close'].iloc[-1]):,.4f}**")
+# wybór separatora (opcjonalny)
+sep_choice = st.selectbox("Separator (opcjonalnie)", ["Auto", ",", ";", "\\t"], index=0, help="Wymuś separator jeśli parser się myli")
+
+# przycisk testu źródła
+if st.button("🔎 Test Stooq (podgląd pierwszych linii)", use_container_width=True):
+    try:
+        # spróbuj tylko pobrać tekst i pokaż nagłówek
+        import requests, time
+        sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+        test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+        r = requests.get(test_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
+        r.raise_for_status()
+        preview = "\n".join((r.text or "").splitlines()[:5])
+        st.code(preview or "(pusto)", language="text")
+    except Exception as e:
+        st.error(f"Test nie powiódł się: {e}")
 
 # --- Right: compact parameter grid (names left, sliders inline) ---
 with right:
