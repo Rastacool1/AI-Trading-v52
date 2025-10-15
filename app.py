@@ -138,7 +138,7 @@ with right:
     st.markdown("</div></div>", unsafe_allow_html=True)
 
     # MA — fast/mid/slow w jednej linii
-    st.markdown("<div class='row'><div class='name'>MA</div><div class='cells'>", unsafe_allow_html=True), p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast, label_visibility="collapsed", key="ma_f")
+    st.markdown("<div class='row'><div class='name'>MA</div><div class='cells'>", unsafe_allow_html=True); p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast, label_visibility="collapsed", key="ma_f")
     p.ma_mid  = st.slider("MA mid",  20, 100, p.ma_mid, label_visibility="collapsed", key="ma_m")
     p.ma_slow = st.slider("MA slow", 20, 250, p.ma_slow, label_visibility="collapsed", key="ma_s")
     st.markdown("</div></div>", unsafe_allow_html=True)
