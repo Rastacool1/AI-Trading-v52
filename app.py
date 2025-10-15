@@ -188,48 +188,43 @@ with right:
         p.percentile_window = st.slider("Okno percentyli", 30, 180, p.percentile_window, key="perc_win")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# =========================  SAFE DATA LOAD (bez crashy)  =========================
-YF_MAP = {"^spx":"^GSPC","^ndx":"^NDX","^vix":"^VIX","btcusd":"BTC-USD","btcpln":"BTC-PLN","eurusd":"EURUSD=X"}
+# =====================  DATA & SIGNALS (ONLY STOOQ)  =====================
+def stooq_url_preview(sym: str) -> str:
+    s = sym.strip().lower().replace("^", "").replace("/", "").replace("=", "")
+    return f"https://stooq.pl/q/d/l/?s={s}&i=d"
 
-def safe_load(src_choice, sym, fileobj):
-    sym = sym.strip()
-    if src_choice=="CSV":
-        if not fileobj:
-            st.warning("Wgraj CSV z kolumnami Date/Data i Close/Zamkniecie.")
+with st.expander("🔎 Diagnostyka źródła danych (Stooq)", expanded=False):
+    st.write("Symbol:", f"`{symbol}`")
+    st.write("Podgląd URL:", stooq_url_preview(symbol))
+
+def load_data_stooq_or_csv(src_choice: str, sym: str, csv_file):
+    if src_choice == "CSV":
+        if csv_file is None:
+            st.warning("Wgraj plik CSV (kolumny: Date/Data, Close/Zamknięcie).")
             return None, "CSV"
         try:
-            return from_csv(fileobj), "CSV"
+            return from_csv(csv_file), "CSV"
         except Exception as e:
-            st.error(f"Błąd CSV: {e}"); return None, "CSV"
-    if src_choice=="Stooq":
-        try:
-            return from_stooq(sym), "Stooq"
-        except Exception as e:
-            y = YF_MAP.get(sym.lower(), sym)
-            st.info(f"Stooq nie działa ({e}). Próbuję Yahoo: {y}")
-            try:
-                return from_yf(y), f"Yahoo ({y})"
-            except Exception as e2:
-                st.error(f"Brak danych: Stooq={e} | Yahoo={e2}")
-                return None, "Error"
-    if src_choice=="Yahoo":
-        y = YF_MAP.get(sym.lower(), sym)
-        try:
-            return from_yf(y), f"Yahoo ({y})"
-        except Exception as e:
-            st.error(f"Yahoo błąd: {e}"); return None, "Yahoo"
+            st.error(f"Błąd CSV: {e}")
+            return None, "CSV"
 
-df, used_source = safe_load(src, symbol, csv_file)
+    # WYŁĄCZNIE Stooq
+    try:
+        df = from_stooq(sym)
+        return df, "Stooq"
+    except Exception as e:
+        st.error(
+            "❌ Stooq zwrócił błąd i nie używamy żadnych fallbacków.\n\n"
+            f"Symbol: `{sym}`\nBłąd: {e}\n\n"
+            "➡️ Spróbuj inny symbol lub wgraj CSV."
+        )
+        return None, "Stooq"
+
+df, used_source = load_data_stooq_or_csv(src, symbol, csv_file)
 if df is None or df.empty:
     st.stop()
-close = df["Close"].dropna()
 
-# Optional sentiment
-try:
-    vix = from_stooq("^vix")["Close"]
-    sent = heuristic_from_vix(vix).reindex(close.index).fillna(method="ffill")
-except Exception:
-    sent = pd.Series(0, index=close.index)
+close = df["Close"].dropna()
 
 # =========================  SIGNALS & DECISION  =========================
 feat = compute_features(close, p)
