@@ -381,9 +381,64 @@ if auto_tune_click:
     st.markdown("<div class='card'><div class='h2'>🔁 Auto-Tune (walk-forward)</div>", unsafe_allow_html=True)
     try:
         space = grid_space()
-        results, stability = walk_forward(close, sent=None, space=space, folds=4, cost_bps=10)
-        st.write("Wyniki OS per fold:", [{"fold": r['fold'], "metrics": r['metrics_os']} for r in results])
+
+        # >>> usuwamy 'sent' – ta funkcja go nie przyjmuje
+        results, stability = walk_forward(close, space=space, folds=4, cost_bps=10)
+
+        # wybierz najlepszy run po metryce OOS (np. Sharpe albo CAGR)
+        def _score_run(r):
+            m = r.get("metrics_os", {}) or {}
+            # preferuj Sharpe, fallback na CAGR, potem total return
+            return m.get("sharpe", 0.0) or m.get("cagr", 0.0) or m.get("ret_total", 0.0)
+
+        best_run = max(results, key=_score_run)
+        best_params = best_run.get("best") or best_run.get("params") or {}
+
+        # pokaż wyniki
+        st.write("Wyniki OS per fold:", [{"fold": r.get("fold"), "metrics": r.get("metrics_os")} for r in results])
         st.write("Stability (liczność wybieranych parametrów):", stability)
+        st.write("Wybrane parametry:", best_params)
+
+        # mapowanie kluczy -> session_state keys użytych przy sliderach
+        keymap = {
+            "rsi_window": "rsi_w",
+            "rsi_buy": "rsi_b",
+            "rsi_sell": "rsi_s",
+            "ma_fast": "ma_f",
+            "ma_mid": "ma_m",
+            "ma_slow": "ma_s",
+            "bb_window": "bb_w",
+            "bb_std": "bb_s",
+            "w_rsi": "wg_rsi",
+            "w_ma": "wg_ma",
+            "w_bb": "wg_bb",
+            "w_breakout": "wg_br",
+            "w_sent": "wg_se",
+            "percentile_window": "perc_win",
+            "percentile_mode": "perc_on",
+        }
+
+        # zaktualizuj slidery i paramy w sesji
+        updates = {}
+        for k, v in best_params.items():
+            if k in keymap:
+                updates[keymap[k]] = int(v) if isinstance(v, float) and v.is_integer() else v
+
+        if updates:
+            st.session_state.update(updates)
+            st.success("✅ Zastosowano najlepsze parametry — odświeżam widok…")
+            st.rerun()
+        else:
+            st.warning("Auto-Tune zakończony, ale nie zwrócił znanych parametrów do ustawienia.")
+
+    except TypeError as e:
+        # na wypadek innej sygnatury (np. bez nazwanych argumentów)
+        try:
+            results, stability = walk_forward(close, space, 4, 10)  # fallback wywołania pozycyjnego
+            st.info("Uruchomiono walk_forward w trybie zgodności (pozycyjne argumenty).")
+        except Exception as e2:
+            st.error(f"Auto-Tune błąd: {e2}")
     except Exception as e:
         st.error(f"Auto-Tune błąd: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
+
