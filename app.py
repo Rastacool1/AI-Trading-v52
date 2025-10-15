@@ -137,72 +137,56 @@ with right:
     st.markdown("<div class='row'><div class='name'>RSI</div>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1], gap="small")
     with c1:
-        p.rsi_window = st.slider("RSI window", 5, 30, p.rsi_window,
-                                 label_visibility="collapsed", key="rsi_w")
+        p.rsi_window = st.slider("RSI window", 5, 30, p.rsi_window, key="rsi_w")
     with c2:
-        p.rsi_buy = st.slider("RSI BUY", 10, 50, p.rsi_buy,
-                              label_visibility="collapsed", key="rsi_b")
+        p.rsi_buy = st.slider("RSI BUY", 10, 50, p.rsi_buy, key="rsi_b")
     with c3:
-        p.rsi_sell = st.slider("RSI SELL", 50, 90, p.rsi_sell,
-                               label_visibility="collapsed", key="rsi_s")
+        p.rsi_sell = st.slider("RSI SELL", 50, 90, p.rsi_sell, key="rsi_s")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # MA — fast/mid/slow w jednej linii
+    # MA — fast/mid/slow
     st.markdown("<div class='row'><div class='name'>MA</div>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 1, 1], gap="small")
-    with col1:
-        p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast,
-                              label_visibility="collapsed", key="ma_f")
-    with col2:
-        p.ma_mid = st.slider("MA mid", 20, 100, p.ma_mid,
-                             label_visibility="collapsed", key="ma_m")
-    with col3:
-        p.ma_slow = st.slider("MA slow", 20, 250, p.ma_slow,
-                              label_visibility="collapsed", key="ma_s")
+    m1, m2, m3 = st.columns([1, 1, 1], gap="small")
+    with m1:
+        p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast, key="ma_f")
+    with m2:
+        p.ma_mid = st.slider("MA mid", 20, 100, p.ma_mid, key="ma_m")
+    with m3:
+        p.ma_slow = st.slider("MA slow", 20, 250, p.ma_slow, key="ma_s")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # BB — window/std w jednej linii
+    # BB — window/std
     st.markdown("<div class='row'><div class='name'>BB</div>", unsafe_allow_html=True)
     b1, b2 = st.columns([1, 1], gap="small")
     with b1:
-        p.bb_window = st.slider("BB window", 10, 40, p.bb_window,
-                                label_visibility="collapsed", key="bb_w")
+        p.bb_window = st.slider("BB window", 10, 40, p.bb_window, key="bb_w")
     with b2:
-        p.bb_std = st.slider("BB std", 1.0, 3.0, p.bb_std,
-                             label_visibility="collapsed", key="bb_s")
+        p.bb_std = st.slider("BB std", 1.0, 3.0, p.bb_std, key="bb_s")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Wagi — pięć suwaków w jednej linii
+    # Wagi
     st.markdown("<div class='row'><div class='name'>Wagi</div>", unsafe_allow_html=True)
     w1, w2, w3, w4, w5 = st.columns([1, 1, 1, 1, 1], gap="small")
     with w1:
-        p.w_rsi = st.slider("w_rsi", 0.0, 1.0, p.w_rsi,
-                            label_visibility="collapsed", key="wg_rsi")
+        p.w_rsi = st.slider("w_rsi", 0.0, 1.0, p.w_rsi, key="wg_rsi")
     with w2:
-        p.w_ma = st.slider("w_ma", 0.0, 1.0, p.w_ma,
-                           label_visibility="collapsed", key="wg_ma")
+        p.w_ma = st.slider("w_ma", 0.0, 1.0, p.w_ma, key="wg_ma")
     with w3:
-        p.w_bb = st.slider("w_bb", 0.0, 1.0, p.w_bb,
-                           label_visibility="collapsed", key="wg_bb")
+        p.w_bb = st.slider("w_bb", 0.0, 1.0, p.w_bb, key="wg_bb")
     with w4:
-        p.w_breakout = st.slider("w_breakout", 0.0, 1.0, p.w_breakout,
-                                 label_visibility="collapsed", key="wg_br")
+        p.w_breakout = st.slider("w_breakout", 0.0, 1.0, p.w_breakout, key="wg_br")
     with w5:
-        p.w_sent = st.slider("w_sent", 0.0, 1.0, p.w_sent,
-                             label_visibility="collapsed", key="wg_se")
+        p.w_sent = st.slider("w_sent", 0.0, 1.0, p.w_sent, key="wg_se")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Progi (percentyle) — checkbox + slider w jednej linii
+    # Progi
     st.markdown("<div class='row'><div class='name'>Progi</div>", unsafe_allow_html=True)
     pr1, pr2 = st.columns([1, 1], gap="small")
     with pr1:
         p.percentile_mode = st.checkbox("Progi dynamiczne", value=True, key="perc_on")
     with pr2:
-        p.percentile_window = st.slider("Okno percentyli", 30, 180, p.percentile_window,
-                                        label_visibility="collapsed", key="perc_win")
+        p.percentile_window = st.slider("Okno percentyli", 30, 180, p.percentile_window, key="perc_win")
     st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)  # /card
 
 # =========================  SAFE DATA LOAD (bez crashy)  =========================
 YF_MAP = {"^spx":"^GSPC","^ndx":"^NDX","^vix":"^VIX","btcusd":"BTC-USD","btcpln":"BTC-PLN","eurusd":"EURUSD=X"}
