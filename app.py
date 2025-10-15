@@ -23,7 +23,7 @@ st.markdown("""
   --accent:#3BAFDA; --good:#00C389; --bad:#FF5C7A; --amber:#CBA85B; --border:rgba(255,255,255,.06);
 }
 html, body, .block-container{background:var(--bg) !important; color:var(--text) !important;}
-.block-container{padding-top:66px; max-width:1500px;}      /* więcej top-paddingu: przyciski nie są przycięte */
+.block-container{padding-top:66px; max-width:1500px;}
 
 /* Top bar */
 .topbar{position:fixed; top:0; left:0; right:0; z-index:1000;
@@ -33,30 +33,33 @@ html, body, .block-container{background:var(--bg) !important; color:var(--text) 
 .logo .mark{width:36px; height:36px; border-radius:8px; background:#1F2530; display:flex; align-items:center; justify-content:center; font-weight:800; color:var(--amber);}
 .logo .title{font-weight:800; font-size:1.0rem; letter-spacing:.3px;}
 
-/* Karty */
-.card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:12px 14px; box-shadow:0 6px 16px rgba(0,0,0,.25);}
-.card-2{background:var(--panel-2); border:1px solid var(--border); border-radius:14px; padding:12px 14px;}
-.h1{font-weight:800; font-size:1.10rem; letter-spacing:.2px;}
-.h2{font-weight:700; font-size:.98rem; letter-spacing:.2px; margin-bottom:6px;}
-.sub{color:var(--muted); font-size:.88rem;}
+/* Cards */
+.card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:10px 12px; box-shadow:0 6px 16px rgba(0,0,0,.25);}
+.card-2{background:var(--panel-2); border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
+.h1{font-weight:800; font-size:1.06rem; letter-spacing:.2px; margin-bottom:6px;}
+.h2{font-weight:700; font-size:.96rem; letter-spacing:.2px; margin-bottom:4px;}
+.sub{color:var(--muted); font-size:.86rem;}
 
-/* Flat modern inputs */
+/* Inputs */
 label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput label { color: var(--text) !important; font-weight:600; }
 .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"]{
   background:#0E1115 !important; color:var(--text) !important; border-radius:10px; border:1px solid var(--border) !important;
 }
+
+/* Uploader: złote tło */
 .stFileUploader, .stFileUploader div[data-testid="stFileUploaderDropzone"]{
-  background:#0E1115 !important; border:1px dashed rgba(255,255,255,.18) !important; border-radius:12px !important;
+  background:linear-gradient(180deg, rgba(203,168,91,.18), rgba(203,168,91,.10)) !important;
+  border:1px dashed rgba(203,168,91,.65) !important; border-radius:12px !important; color:var(--amber) !important;
 }
 
-/* Slidery – bez barwnego tła, niższe, czytelne */
-.stSlider > div[data-baseweb="slider"]{ padding:4px 6px; }
-.stSlider [data-baseweb="slider"] div{ background-color: transparent; } /* bez tła paska */
+/* Slidery – kompakt i bez ciemnego tła */
+.stSlider > div[data-baseweb="slider"]{ padding:2px 4px; }
+.stSlider [data-baseweb="slider"] div{ background-color: transparent; }
 .stSlider [role="slider"]{ background:var(--accent) !important; box-shadow:0 0 0 2px rgba(59,175,218,.25); }
-.stSlider .css-1dp5vir, .stSlider .e1yxm3t61{ color:var(--text) !important; }  /* wartości nad gałką */
+.stSlider .css-1dp5vir, .stSlider .e1yxm3t61{ color:var(--text) !important; }
 
 /* Buttons */
-.stButton button{background:var(--accent); color:#0B0E12; border:none; border-radius:10px; padding:.52rem .9rem; font-weight:800; font-size:.92rem;}
+.stButton button{background:var(--accent); color:#0B0E12; border:none; border-radius:10px; padding:.48rem .8rem; font-weight:800; font-size:.9rem;}
 .stButton button:hover{filter:brightness(1.05); transform:translateY(-1px);}
 .btn-ghost button{background:#232A34; color:var(--text);}
 .btn-amber button{background:var(--amber); color:#101419;}
@@ -67,20 +70,16 @@ label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput l
 .reco.good{border-color:rgba(0,195,137,.35); background:linear-gradient(180deg, rgba(0,195,137,.14), rgba(0,195,137,.06));}
 .reco.bad{border-color:rgba(255,92,122,.35); background:linear-gradient(180deg, rgba(255,92,122,.14), rgba(255,92,122,.06));}
 
-/* Grid wskaźników: wiersze = wskaźniki, kolumny = parametry */
-.grid-row{display:grid; grid-template-columns: 160px 1fr 1fr 1fr 1fr; gap:12px; align-items:center; margin:6px 0;}
-.grid-row .name{font-weight:700; color:var(--text);}
-.grid-row .cell{min-width:0;}  /* pozwala się kurczyć */
+/* Grid wskaźników: lewa kolumna = nazwa, po prawej parametry w jednej linii */
+.row{display:grid; grid-template-columns: 84px 1fr; gap:10px; align-items:center; margin:2px 0;}
+.row .name{font-weight:800; color:var(--text); text-transform:uppercase; font-size:.85rem; letter-spacing:.4px;}
+.row .cells{display:grid; grid-template-columns: repeat(5, 1fr); gap:8px;}
+/* responsywność: gdy wężej, redukuj liczbę kolumn parametrów */
+@media (max-width: 1400px){ .row .cells{grid-template-columns: repeat(4, 1fr);} }
+@media (max-width: 1120px){ .row .cells{grid-template-columns: repeat(3, 1fr);} }
+@media (max-width: 880px) { .row .cells{grid-template-columns: repeat(2, 1fr);} }
+@media (max-width: 640px) { .row .cells{grid-template-columns: 1fr;} }
 
-@media (max-width: 1400px){
-  .grid-row{grid-template-columns: 140px 1fr 1fr 1fr;}
-}
-@media (max-width: 1100px){
-  .grid-row{grid-template-columns: 120px 1fr 1fr;}
-}
-@media (max-width: 860px){
-  .grid-row{grid-template-columns: 110px 1fr;}
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -113,19 +112,17 @@ with st.container():
         export_placeholder = st.empty()
         st.markdown("</div>", unsafe_allow_html=True)
 
-# =========================  STARTER PANEL — Excel-like horizontal + grid =========================
-# (Topbar zostaje jak masz — tu tylko panel ustawień)
+# =========================  STARTER PANEL — kompakt + nazwy po lewej =========================
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.markdown("<div class='h1'>⚙️ Ustawienia / Filtry</div>", unsafe_allow_html=True)
 
-# Lewa kolumna: źródło/symbol/CSV. Prawa: siatka wskaźników (wiersze) i parametrów (kolumny).
 left, right = st.columns([1.0, 3.0], gap="large")
 
 with left:
     src = st.selectbox("Źródło", ["Stooq", "Yahoo", "CSV"])
     symbol = st.text_input("Symbol", value="btcpln", help="np. btcpln / eurusd / ^spx", placeholder="ticker")
     csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"])
-    st.markdown("<div class='h2' style='margin-top:10px;'>Ryzyko & koszty</div>", unsafe_allow_html=True)
+    st.markdown("<div class='h2' style='margin-top:8px;'>Ryzyko & koszty</div>", unsafe_allow_html=True)
     tc = st.number_input("Prowizja (bps)", 0, 100, 5)
     sl = st.number_input("Poślizg (bps)", 0, 100, 5)
     target_vol = st.number_input("Target vol (roczna)", 0.01, 1.0, 0.12, step=0.01)
@@ -133,46 +130,40 @@ with left:
 with right:
     p = SignalParams()
 
-    # RSI: okno + progi BUY/SELL w jednej linii
-    st.markdown("<div class='grid-row'>"
-                "<div class='name'>RSI</div>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1,1,1], gap="small")
-    with c1: p.rsi_window = st.slider("RSI window", 5, 30, p.rsi_window, key="rsi_w")
-    with c2: p.rsi_buy    = st.slider("RSI BUY", 10, 50, p.rsi_buy, key="rsi_b")
-    with c3: p.rsi_sell   = st.slider("RSI SELL", 50, 90, p.rsi_sell, key="rsi_s")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # RSI — trzy suwaki w jednej linii (etykiety suwaków schowane)
+    st.markdown("<div class='row'><div class='name'>RSI</div><div class='cells'>", unsafe_allow_html=True)
+    p.rsi_window = st.slider("RSI window", 5, 30, p.rsi_window, label_visibility="collapsed", key="rsi_w")
+    p.rsi_buy    = st.slider("RSI BUY",    10, 50, p.rsi_buy,    label_visibility="collapsed", key="rsi_b")
+    p.rsi_sell   = st.slider("RSI SELL",   50, 90, p.rsi_sell,   label_visibility="collapsed", key="rsi_s")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-    # MA: fast/mid/slow w jednej linii
-    st.markdown("<div class='grid-row'><div class='name'>MA</div>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1,1,1], gap="small")
-    with c1: p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast, key="ma_f")
-    with c2: p.ma_mid  = st.slider("MA mid", 20, 100, p.ma_mid, key="ma_m")
-    with c3: p.ma_slow = st.slider("MA slow", 20, 250, p.ma_slow, key="ma_s")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # MA — fast/mid/slow w jednej linii
+    st.markdown("<div class='row'><div class='name'>MA</div><div class='cells'>", unsafe_allow_html=True)
+    p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast, label_visibility="collapsed", key="ma_f")
+    p.ma_mid  = st.slider("MA mid",  20, 100, p.ma_mid, label_visibility="collapsed", key="ma_m")
+    p.ma_slow = st.slider("MA slow", 20, 250, p.ma_slow, label_visibility="collapsed", key="ma_s")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-    # BB: window + std w jednej linii
-    st.markdown("<div class='grid-row'><div class='name'>BB</div>", unsafe_allow_html=True)
-    c1, c2 = st.columns([1,1], gap="small")
-    with c1: p.bb_window = st.slider("BB window", 10, 40, p.bb_window, key="bb_w")
-    with c2: p.bb_std    = st.slider("BB std", 1.0, 3.0, p.bb_std, key="bb_s")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # BB — window/std w jednej linii
+    st.markdown("<div class='row'><div class='name'>BB</div><div class='cells'>", unsafe_allow_html=True)
+    p.bb_window = st.slider("BB window", 10, 40, p.bb_window, label_visibility="collapsed", key="bb_w")
+    p.bb_std    = st.slider("BB std",    1.0, 3.0, p.bb_std,    label_visibility="collapsed", key="bb_s")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-    # Wagi: w jednej linii (kompaktowo)
-    st.markdown("<div class='grid-row'><div class='name'>Wagi</div>", unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1], gap="small")
-    with c1: p.w_rsi      = st.slider("w_rsi", 0.0, 1.0, p.w_rsi, key="wg_rsi")
-    with c2: p.w_ma       = st.slider("w_ma", 0.0, 1.0, p.w_ma, key="wg_ma")
-    with c3: p.w_bb       = st.slider("w_bb", 0.0, 1.0, p.w_bb, key="wg_bb")
-    with c4: p.w_breakout = st.slider("w_breakout", 0.0, 1.0, p.w_breakout, key="wg_br")
-    with c5: p.w_sent     = st.slider("w_sent", 0.0, 1.0, p.w_sent, key="wg_se")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Wagi — pięć suwaków w jednej linii
+    st.markdown("<div class='row'><div class='name'>Wagi</div><div class='cells'>", unsafe_allow_html=True)
+    p.w_rsi      = st.slider("w_rsi",      0.0, 1.0, p.w_rsi,      label_visibility="collapsed", key="wg_rsi")
+    p.w_ma       = st.slider("w_ma",       0.0, 1.0, p.w_ma,       label_visibility="collapsed", key="wg_ma")
+    p.w_bb       = st.slider("w_bb",       0.0, 1.0, p.w_bb,       label_visibility="collapsed", key="wg_bb")
+    p.w_breakout = st.slider("w_breakout", 0.0, 1.0, p.w_breakout, label_visibility="collapsed", key="wg_br")
+    p.w_sent     = st.slider("w_sent",     0.0, 1.0, p.w_sent,     label_visibility="collapsed", key="wg_se")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-    # Progi dynamiczne
-    st.markdown("<div class='grid-row'><div class='name'>Progi</div>", unsafe_allow_html=True)
-    c1, c2 = st.columns([1,1], gap="small")
-    with c1: p.percentile_mode = st.checkbox("Progi dynamiczne (percentyle)", value=True, key="perc_on")
-    with c2: p.percentile_window = st.slider("Okno percentyli", 30, 180, p.percentile_window, key="perc_win")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Progi (percentyle) — w jednej linii
+    st.markdown("<div class='row'><div class='name'>Progi</div><div class='cells'>", unsafe_allow_html=True)
+    p.percentile_mode   = st.checkbox("Progi dynamiczne", value=True, key="perc_on")
+    p.percentile_window = st.slider("Okno percentyli", 30, 180, p.percentile_window, label_visibility="collapsed", key="perc_win")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)  # /card
 
