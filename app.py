@@ -35,7 +35,21 @@ html, body, .block-container{background:var(--bg) !important; color:var(--text) 
 .logo{display:flex; gap:10px; align-items:center;}
 .logo .mark{width:36px; height:36px; border-radius:8px; background:#1F2530; display:flex; align-items:center; justify-content:center; font-weight:800; color:var(--amber);}
 .logo .title{font-weight:800; font-size:1.0rem; letter-spacing:.3px;}
+/* Topbar buttons – równe wymiary */
+.topbar .stButton > button { width:100% !important; height:40px !important; }
 
+/* CSV uploader – kompakt, bez dużego białego pola/instrukcji */
+[data-testid="stFileUploaderDropzone"]{
+  background: transparent !important;
+  border: 1px dashed rgba(203,168,91,.35) !important;
+  border-radius: 10px !important;
+  min-height: 40px !important;
+  padding: 6px 10px !important;
+}
+[data-testid="stFileUploaderDropzone"] * { color: var(--amber) !important; }
+[data-testid="stFileUploaderDropzone"] svg { display: none !important; }        /* ikona chmury off */
+[data-testid="stFileUploaderInstructions"] { display:none !important; }         /* instrukcje off */
+[data-testid="stFileUploaderDropzone"] label { display:none !important; }       /* label w polu off */
 /* Cards */
 .card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:10px 12px; box-shadow:0 6px 16px rgba(0,0,0,.25);}
 .card-2{background:var(--panel-2); border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
@@ -84,11 +98,7 @@ label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput l
 # równe kolumny na top-bar
 tb1, tb2, tb3, tb4, tb5 = st.columns(5, gap="small")
 # wymuś jednakową szerokość i wysokość guzików
-st.markdown("""
-<style>
-/* wszystkie przyciski w topbar pełna szerokość + ta sama wysokość */
-.topbar .stButton > button { width:100% !important; height:40px !important; }
-</style>
+
 with tb1:
     st.markdown(
         "<div class='topbar card-2'>"
