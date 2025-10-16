@@ -93,11 +93,9 @@ label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput l
 
 
 # -----------------------------------------------------------------------------
-# TOP BAR (logo + main actions)
+# TOP BAR (logo + main actions) — równe szerokości przycisków
 # -----------------------------------------------------------------------------
-# równe kolumny na top-bar
-tb1, tb2, tb3, tb4, tb5 = st.columns(5, gap="small")
-# wymuś jednakową szerokość i wysokość guzików
+tb1, tb2, tb3, tb4, tb5, tb6 = st.columns([2.4, 1, 1, 1, 1, 1], gap="small")
 
 with tb1:
     st.markdown(
@@ -106,24 +104,28 @@ with tb1:
         "<div class='title'>Trading Edge — Dashboard</div></div>"
         "</div>", unsafe_allow_html=True
     )
+
 with tb2:
     st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    bL, bF = st.columns(2, gap="small")
-    with bL:
-        auto_tune_light_click = st.button("⚡ Light Auto-Tune", use_container_width=True)
-    with bF:
-        auto_tune_full_click  = st.button("🔁 Pełny Auto-Tune", use_container_width=True)
+    auto_tune_light_click = st.button("⚡ Light Auto-Tune", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with tb3:
     st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
+    auto_tune_full_click = st.button("🔁 Pełny Auto-Tune", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with tb4:
+    st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
     recalc_click = st.button("⚡ Przelicz", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
-with tb4:
+
+with tb5:
     st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
     autoscale_click = st.button("🖼️ Autoskaluj", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
-with tb5:
+
+with tb6:
     st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
     export_placeholder = st.empty()
     st.markdown("</div>", unsafe_allow_html=True)
