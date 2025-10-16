@@ -217,10 +217,91 @@ with left:
                 st.session_state.data_ok = True
                 st.success(f"✅ Pobranie OK ze Stooq: {len(_df)} wierszy. (sep = {forced or 'auto'})")
 
-       except Exception as e:
+    except Exception as e:
     st.session_state.data_ok = False
     st.session_state.df = None
     st.session_state.used_source = None
+
+    # Wyświetl oryginalny błąd
+    st.error(f"❌ Błąd wczytywania: {e}")
+
+    # Przygotuj linki do ręcznego pobrania
+    sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+    direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+    proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+
+    st.markdown("### 🔗 Pobierz dane ręcznie")
+    st.markdown(
+        f"- Bezpośrednio ze Stooq (otwórz w nowej karcie): "
+        f"[Pobierz CSV]({direct_url}){{:target='_blank' rel='noopener'}}",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"- Jeśli direct nie działa (limit/anty-bot), spróbuj przez proxy: "
+        f"[Pobierz przez proxy]({proxy_url}){{:target='_blank' rel='noopener'}}",
+        unsafe_allow_html=True
+    )
+
+    st.info(
+        "Jeśli przeglądarka pobierze plik: zapisz go lokalnie (Downloads), "
+        "a następnie wgraj przyciskiem **Wgraj CSV** po lewej stronie."
+    )
+
+    # Spróbuj jednorazowo pobrać przez proxy po stronie serwera i jeśli się uda —
+    # wczytaj DF do session_state oraz udostępnij przycisk do pobrania CSV (lokalnie).
+    try:
+        import io, requests
+        rproxy = requests.get(proxy_url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
+        rproxy.raise_for_status()
+        txt = (rproxy.text or "").strip()
+        if txt and not txt.lstrip().startswith("<"):
+            import pandas as _pd
+            # próbuj autodetekcję separatora
+            try:
+                df_try = _pd.read_csv(io.StringIO(txt), sep=None, engine="python")
+            except Exception:
+                # fallback sep
+                for s in (";", ",", "\t"):
+                    try:
+                        df_try = _pd.read_csv(io.StringIO(txt), sep=s)
+                        break
+                    except Exception:
+                        df_try = None
+            if df_try is not None and not df_try.empty:
+                # normalizacja minimalna: Date/Close -> index
+                df_try.columns = [str(c).strip() for c in df_try.columns]
+                # znajdź kolumny
+                date_col = next((c for c in ("Date","Data") if c in df_try.columns), df_try.columns[0])
+                close_col = next((c for c in ("Close","Zamkniecie","Zamknięcie","Kurs","Price","Adj Close") if c in df_try.columns),
+                                 (df_try.columns[4] if df_try.shape[1] >= 5 else df_try.columns[-1]))
+                out = df_try[[date_col, close_col]].rename(columns={date_col:"Date", close_col:"Close"}).copy()
+                out["Date"] = _pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
+                out["Close"] = _pd.to_numeric(out["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+                out = out.dropna().sort_values("Date").set_index("Date")[["Close"]]
+                if not out.empty:
+                    st.success("✅ Pobranie przez proxy powiodło się — dane załadowano automatycznie.")
+                    st.session_state.df = out
+                    st.session_state.used_source = "Stooq (proxy)"
+                    st.session_state.data_ok = True
+                    # udostępnij przycisk do pobrania CSV lokalnie
+                    csv_bytes = out.reset_index().to_csv(index=False).encode("utf-8")
+                    st.download_button("⬇️ Pobierz CSV (z serwera)", csv_bytes,
+                                       file_name=f"{sym_norm}_stooq.csv", mime="text/csv", use_container_width=True)
+                    # przerwij dalsze pokazywanie instrukcji
+                    st.stop()
+    except Exception:
+        # ignorujemy — wyświetlamy dalej instrukcję manualną
+        pass
+
+    # Jeśli proxy też nie zadziałało — wyraźna instrukcja krok po kroku
+    with st.expander("Instrukcja: jak pobrać i wgrać CSV (krok po kroku)"):
+        st.markdown(
+            "1. Kliknij **Pobierz CSV** powyżej; plik zostanie pobrany do folderu **Pobrane/Downloads**.\n\n"
+            "2. W aplikacji: w panelu po lewej kliknij **Upload CSV** (Wgraj CSV) i wybierz pobrany plik.\n\n"
+            "3. Po wgraniu kliknij **⬇️ Pobierz dane** żeby załadować plik do aplikacji.\n\n"
+            "Jeśli coś nie działa: spróbuj najpierw otworzyć link w trybie incognito lub zmienić sieć (np. użyć tetheringu)."
+        )
+
 
     # Wyświetl oryginalny błąd
     st.error(f"❌ Błąd wczytywania: {e}")
