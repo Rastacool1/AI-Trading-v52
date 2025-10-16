@@ -184,30 +184,30 @@ with left:
                     st.session_state.used_source = "CSV"
                     st.session_state.data_ok = True
                     st.success(f"✅ Wczytano dane z CSV: {len(_df)} wierszy.")
-              else:  # Stooq
-                forced = None
-                if sep_choice != "Auto":
-                    forced = "\t" if sep_choice == "\\t" else sep_choice
-                else:
-                    # Auto: szybki podgląd nagłówka i zgadnij separator
-                    import requests, time
-                    sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-                    test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
-                    r = requests.get(test_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
-                    r.raise_for_status()
-                    header = (r.text or "").splitlines()[:1]
-                    header = header[0] if header else ""
-                    if ";" in header:   forced = ";"
-                    elif "," in header: forced = ","
-                    elif "\t" in header: forced = "\t"
-                    if not header or header.lstrip().startswith("<"):
-                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie lub użyj CSV.")
-            
-                _df = from_stooq(symbol, forced_sep=forced)
-                st.session_state.df = _df
-                st.session_state.used_source = "Stooq"
-                st.session_state.data_ok = True
-                st.success(f"✅ Pobranie OK ze Stooq: {len(_df)} wierszy. (sep = {forced or 'auto'})")
+                  else:  # Stooq
+                    forced = None
+                    if sep_choice != "Auto":
+                        forced = "\t" if sep_choice == "\\t" else sep_choice
+                    else:
+                        # Auto: szybki podgląd nagłówka i zgadnij separator
+                        import requests, time
+                        sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+                        test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+                        r = requests.get(test_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
+                        r.raise_for_status()
+                        header = (r.text or "").splitlines()[:1]
+                        header = header[0] if header else ""
+                        if ";" in header:   forced = ";"
+                        elif "," in header: forced = ","
+                        elif "\t" in header: forced = "\t"
+                        if not header or header.lstrip().startswith("<"):
+                            raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie lub użyj CSV.")
+                
+                    _df = from_stooq(symbol, forced_sep=forced)
+                    st.session_state.df = _df
+                    st.session_state.used_source = "Stooq"
+                    st.session_state.data_ok = True
+                    st.success(f"✅ Pobranie OK ze Stooq: {len(_df)} wierszy. (sep = {forced or 'auto'})")
 
         except Exception as e:
             st.session_state.data_ok = False
