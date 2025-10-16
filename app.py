@@ -91,8 +91,13 @@ with tb1:
     )
 with tb2:
     st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    auto_tune_click = st.button("🔁 Auto-Tune", use_container_width=True)
+    bL, bF = st.columns(2, gap="small")
+    with bL:
+        auto_tune_light_click = st.button("⚡ Light Auto-Tune", use_container_width=True)
+    with bF:
+        auto_tune_full_click  = st.button("🔁 Pełny Auto-Tune", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
 with tb3:
     st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
     recalc_click = st.button("⚡ Przelicz", use_container_width=True)
@@ -375,104 +380,125 @@ st.plotly_chart(feq, use_container_width=True, theme=None)
 
 
 # -----------------------------------------------------------------------------
-# AUTO-TUNE (on demand)
+# AUTO-TUNE (on demand) — Light & Full + safe rerun
 # -----------------------------------------------------------------------------
-if auto_tune_click:
-    st.markdown("<div class='card'><div class='h2'>🔁 Auto-Tune (walk-forward)</div>", unsafe_allow_html=True)
+def _quick_space():
+    """Szybki, mały grid (ok. kilkadziesiąt kombinacji) — wyniki w ~15–40s."""
+    return {
+        "rsi_window": [10, 14, 20],
+        "rsi_buy":    [25, 30, 35],
+        "rsi_sell":   [65, 70, 75],
+        "ma_fast":    [10, 20],
+        "ma_mid":     [50, 100],
+        "ma_slow":    [150],
+        "bb_window":  [20, 30],
+        "bb_std":     [1.5, 2.0],
+        "w_rsi":      [0.3, 0.5, 0.7],
+        "w_ma":       [0.3, 0.5, 0.7],
+        "w_bb":       [0.0, 0.2, 0.4],
+        "w_breakout": [0.0, 0.2, 0.4],
+        "w_sent":     [0.0, 0.2],
+        "percentile_window": [60, 120],
+        "percentile_mode":   [True],
+    }
 
-    # 1) sztuczny sentyment (gdyby walk_forward go wymagał)
+def _run_walk_forward_safely(space, folds, cost_bps):
+    """Uruchamia walk_forward z różnymi sygnaturami bez modyfikacji silnika."""
     dummy_sent = pd.Series(0, index=close.index)
 
-    def run_walk_forward_safely():
-        """
-        Próbuje uruchomić walk_forward z różnymi sygnaturami,
-        tak by NIE dotykać implementacji silnika.
-        Zwraca: (results, stability)
-        """
-        # A) najpierw „po nazwach” bez sent
-        try:
-            return walk_forward(close, space=grid_space(), folds=4, cost_bps=10)
-        except TypeError:
-            pass
-        except AttributeError as e:
-            # np. wewnątrz walk_forward próbowano sent.reindex na dict
-            if "reindex" in str(e):
-                pass
-            else:
-                raise
-
-        # B) pozycyjnie bez sent
-        try:
-            space = grid_space()
-            return walk_forward(close, space, 4, 10)
-        except Exception:
-            pass
-
-        # C) pozycyjnie Z sent (częsty wariant: (close, sent, space, folds, cost_bps))
-        try:
-            space = grid_space()
-            return walk_forward(close, dummy_sent, space, 4, 10)
-        except Exception:
-            pass
-
-        # D) po nazwach Z sent (gdy funkcja przyjmuje, ale nie pod nazwą 'sent')
-        try:
-            space = grid_space()
-            # wiele implementacji akceptuje drugi arg jako sent bez nazwy
-            return walk_forward(close, dummy_sent, space=space, folds=4, cost_bps=10)
-        except Exception as e:
-            raise e  # przekaż dalej najświeższy błąd
-
+    # (A) nazwy argumentów bez sent
     try:
-        results, stability = run_walk_forward_safely()
+        return walk_forward(close, space=space, folds=folds, cost_bps=cost_bps)
+    except TypeError:
+        pass
+    except AttributeError as e:
+        if "reindex" not in str(e):
+            raise
 
-        # wybierz najlepszy run wg metryk OOS
-        def _score_run(r):
-            m = r.get("metrics_os", {}) or {}
-            return m.get("sharpe", 0.0) or m.get("cagr", 0.0) or m.get("ret_total", 0.0)
+    # (B) pozycyjnie bez sent
+    try:
+        return walk_forward(close, space, folds, cost_bps)
+    except Exception:
+        pass
 
-        best_run = max(results, key=_score_run)
-        best_params = best_run.get("best") or best_run.get("params") or {}
+    # (C) pozycyjnie z sent (częsty wariant: (close, sent, space, folds, cost_bps))
+    try:
+        return walk_forward(close, dummy_sent, space, folds, cost_bps)
+    except Exception:
+        pass
 
-        # pokaż wyniki
+    # (D) nazwy argumentów z sent (gdy implementacja go wymaga)
+    return walk_forward(close, dummy_sent, space=space, folds=folds, cost_bps=cost_bps)
+
+def _score_run_os(r):
+    m = r.get("metrics_os", {}) or {}
+    return m.get("sharpe", 0.0) or m.get("cagr", 0.0) or m.get("ret_total", 0.0)
+
+def _apply_best_params(best_params):
+    """Wstrzykuje parametry do sliderów + bezpieczny rerun z krótką pauzą."""
+    keymap = {
+        "rsi_window": "rsi_w",
+        "rsi_buy": "rsi_b",
+        "rsi_sell": "rsi_s",
+        "ma_fast": "ma_f",
+        "ma_mid": "ma_m",
+        "ma_slow": "ma_s",
+        "bb_window": "bb_w",
+        "bb_std": "bb_s",
+        "w_rsi": "wg_rsi",
+        "w_ma": "wg_ma",
+        "w_bb": "wg_bb",
+        "w_breakout": "wg_br",
+        "w_sent": "wg_se",
+        "percentile_window": "perc_win",
+        "percentile_mode": "perc_on",
+    }
+    updates = {}
+    for k, v in (best_params or {}).items():
+        if k in keymap:
+            if isinstance(v, float) and v.is_integer():
+                v = int(v)
+            updates[keymap[k]] = v
+
+    if updates:
+        import time
+        st.session_state.update(updates)
+        st.success("✅ Zastosowano najlepsze parametry — odświeżam widok…")
+        time.sleep(0.3)  # bezpieczne opóźnienie, by uniknąć "SessionInfo not initialized"
+        try:
+            st.rerun()
+        except Exception as e:
+            st.warning(f"Rerun opóźniony (sesja się inicjuje): {e}")
+    else:
+        st.warning("Auto-Tune zakończony, ale nie zwrócił rozpoznawalnych parametrów.")
+
+def _autotune(profile: str):
+    st.markdown(f"<div class='card'><div class='h2'>🔁 {profile} Auto-Tune</div>", unsafe_allow_html=True)
+    try:
+        if profile == "Light":
+            space = _quick_space()
+            folds = 2
+            cost  = 10
+        else:  # Full
+            space = grid_space()   # korzystamy z Twojej pełnej przestrzeni
+            folds = 4
+            cost  = 10
+
+        results, stability = _run_walk_forward_safely(space, folds, cost)
         st.write("Wyniki OS per fold:", [{"fold": r.get("fold"), "metrics": r.get("metrics_os")} for r in results])
         st.write("Stability (liczność wybieranych parametrów):", stability)
+
+        best_run    = max(results, key=_score_run_os)
+        best_params = best_run.get("best") or best_run.get("params") or {}
         st.write("Wybrane parametry:", best_params)
 
-        # mapowanie kluczy -> session_state keys użytych przy sliderach
-        keymap = {
-            "rsi_window": "rsi_w",
-            "rsi_buy": "rsi_b",
-            "rsi_sell": "rsi_s",
-            "ma_fast": "ma_f",
-            "ma_mid": "ma_m",
-            "ma_slow": "ma_s",
-            "bb_window": "bb_w",
-            "bb_std": "bb_s",
-            "w_rsi": "wg_rsi",
-            "w_ma": "wg_ma",
-            "w_bb": "wg_bb",
-            "w_breakout": "wg_br",
-            "w_sent": "wg_se",
-            "percentile_window": "perc_win",
-            "percentile_mode": "perc_on",
-        }
-
-        updates = {}
-        for k, v in best_params.items():
-            if k in keymap:
-                # int dla suwaków całkowitych
-                if isinstance(v, float) and v.is_integer():
-                    v = int(v)
-                updates[keymap[k]] = v
-
-        if updates:
-            st.session_state.update(updates)
-            st.success("✅ Zastosowano najlepsze parametry — odświeżam widok…")
-            st.rerun()
-        else:
-            st.warning("Auto-Tune zakończony, ale nie zwrócił rozpoznawalnych parametrów.")
-
+        _apply_best_params(best_params)
     except Exception as e:
         st.error(f"Auto-Tune błąd: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
+
+# — przyciski
+if auto_tune_light_click:
+    _autotune("Light")
+elif auto_tune_full_click:
+    _autotune("Full")
