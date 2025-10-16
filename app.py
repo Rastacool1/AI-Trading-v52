@@ -83,6 +83,12 @@ label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput l
 # -----------------------------------------------------------------------------
 # równe kolumny na top-bar
 tb1, tb2, tb3, tb4, tb5 = st.columns(5, gap="small")
+# wymuś jednakową szerokość i wysokość guzików
+st.markdown("""
+<style>
+/* wszystkie przyciski w topbar pełna szerokość + ta sama wysokość */
+.topbar .stButton > button { width:100% !important; height:40px !important; }
+</style>
 with tb1:
     st.markdown(
         "<div class='topbar card-2'>"
