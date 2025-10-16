@@ -141,23 +141,24 @@ left, right = st.columns([1.0, 3.0], gap="large")
 
 # --- Left: data source & download gate (ONLY Stooq/CSV) ---
 with left:
+    import requests, time, io  # <-- potrzebne dla testu i fallbacku proxy
+
     src = st.selectbox("Źródło", ["Stooq", "CSV"])
     symbol = st.text_input("Symbol", value="btcpln", help="np. btcpln / eurusd / ^spx", placeholder="ticker")
     csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"])
 
-    # 👇 ten blok MUSI być wcięty (4 spacje) – pokazuje nazwę pliku po wgraniu
+    # pokaż nazwę wgranego pliku (bez wielkiego białego pola)
     if csv_file is not None:
-        size_kb = f"{(csv_file.size/1024):.1f} KB" if hasattr(csv_file, "size") else ""
+        size_kb = f"{(getattr(csv_file, 'size', 0)/1024):.1f} KB" if hasattr(csv_file, "size") else ""
         st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
 
-    # separator (musi być zdefiniowany zanim użyjemy go w kliknięciu)
+    # separator (zanim użyjemy go w kliknięciu)
     sep_choice = st.selectbox("Separator (opcjonalnie)", ["Auto", ",", ";", "\\t"], index=0,
                               help="Wymuś separator jeśli parser się myli")
 
-    # quick tester
+    # podgląd surowego CSV ze Stooq
     if st.button("🔎 Test Stooq (podgląd pierwszych linii)", use_container_width=True):
         try:
-            import requests, time
             sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
             test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
             r = requests.get(test_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
@@ -168,218 +169,106 @@ with left:
             st.error(f"Test nie powiódł się: {e}")
 
     # session state for data gate
-    if "data_ok" not in st.session_state:
-        st.session_state.data_ok = False
-    if "df" not in st.session_state:
-        st.session_state.df = None
-    if "used_source" not in st.session_state:
-        st.session_state.used_source = None
+    st.session_state.setdefault("data_ok", False)
+    st.session_state.setdefault("df", None)
+    st.session_state.setdefault("used_source", None)
 
-        # download button
+    # POBIERZ DANE
     if st.button("⬇️ Pobierz dane", use_container_width=True):
         try:
             if src == "CSV":
                 if csv_file is None:
                     st.warning("Wgraj plik CSV z kolumnami Date/Data i Close/Zamknięcie.")
-                    st.session_state.data_ok = False
+                    st.session_state.update(data_ok=False, df=None, used_source=None)
                 else:
                     _df = from_csv(csv_file)
-                    st.session_state.df = _df
-                    st.session_state.used_source = "CSV"
-                    st.session_state.data_ok = True
+                    st.session_state.update(df=_df, used_source="CSV", data_ok=True)
                     st.success(f"✅ Wczytano dane z CSV: {len(_df)} wierszy.")
-            else:  # Stooq
+            else:
+                # Stooq
+                sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+                # Jeśli Auto — zgadnij separator na podstawie nagłówka
                 forced = None
                 if sep_choice != "Auto":
                     forced = "\t" if sep_choice == "\\t" else sep_choice
                 else:
-                    # Auto: zrób szybki podgląd i zgadnij separator
-                    import requests, time
-                    sym = symbol.strip().lower().replace("^", "").replace("/", "").replace("=", "")
-                    test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
-                    r = requests.get(test_url, timeout=12, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv"})
+                    sniff_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+                    r = requests.get(sniff_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
                     r.raise_for_status()
-                    head = (r.text or "").splitlines()[:1]
-                    header = head[0] if head else ""
-                    if ";" in header:
-                        forced = ";"
-                    elif "," in header:
-                        forced = ","
-                    elif "\t" in header:
-                        forced = "\t"
-                    # jeśli header pusty/HTML – oddaj czytelny błąd
+                    header = (r.text or "").splitlines()[0] if (r.text or "") else ""
+                    if ";" in header: forced = ";"
+                    elif "," in header: forced = ","
+                    elif "\t" in header: forced = "\t"
                     if not header or header.lstrip().startswith("<"):
-                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie za chwilę lub użyj CSV.")
+                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie lub użyj CSV.")
 
                 _df = from_stooq(symbol, forced_sep=forced)
-                st.session_state.df = _df
-                st.session_state.used_source = "Stooq"
-                st.session_state.data_ok = True
+                st.session_state.update(df=_df, used_source="Stooq", data_ok=True)
                 st.success(f"✅ Pobranie OK ze Stooq: {len(_df)} wierszy. (sep = {forced or 'auto'})")
 
-    except Exception as e:
-    st.session_state.data_ok = False
-    st.session_state.df = None
-    st.session_state.used_source = None
+        except Exception as e:
+            # RESET stanu
+            st.session_state.update(data_ok=False, df=None, used_source=None)
 
-    # Wyświetl oryginalny błąd
-    st.error(f"❌ Błąd wczytywania: {e}")
+            # Oryginalny błąd
+            st.error(f"❌ Błąd wczytywania: {e}")
 
-    # Przygotuj linki do ręcznego pobrania
-    sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-    direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
-    proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+            # Klikalne linki do ręcznego pobrania (otwierają w nowej karcie)
+            sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+            direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+            proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
 
-    st.markdown("### 🔗 Pobierz dane ręcznie")
-    st.markdown(
-        f"- Bezpośrednio ze Stooq (otwórz w nowej karcie): "
-        f"[Pobierz CSV]({direct_url}){{:target='_blank' rel='noopener'}}",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f"- Jeśli direct nie działa (limit/anty-bot), spróbuj przez proxy: "
-        f"[Pobierz przez proxy]({proxy_url}){{:target='_blank' rel='noopener'}}",
-        unsafe_allow_html=True
-    )
+            st.markdown("### 🔗 Pobierz dane ręcznie")
+            st.markdown(
+                f"<a href='{direct_url}' target='_blank' rel='noopener'>Pobierz CSV (Stooq)</a>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f"<a href='{proxy_url}' target='_blank' rel='noopener'>Pobierz przez proxy</a>",
+                unsafe_allow_html=True
+            )
+            st.info(
+                "Po pobraniu zapisz plik lokalnie i **wgraj go** przyciskiem *CSV (Date/Data, Close/Zamknięcie)* po lewej."
+            )
 
-    st.info(
-        "Jeśli przeglądarka pobierze plik: zapisz go lokalnie (Downloads), "
-        "a następnie wgraj przyciskiem **Wgraj CSV** po lewej stronie."
-    )
-
-    # Spróbuj jednorazowo pobrać przez proxy po stronie serwera i jeśli się uda —
-    # wczytaj DF do session_state oraz udostępnij przycisk do pobrania CSV (lokalnie).
-    try:
-        import io, requests
-        rproxy = requests.get(proxy_url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
-        rproxy.raise_for_status()
-        txt = (rproxy.text or "").strip()
-        if txt and not txt.lstrip().startswith("<"):
-            import pandas as _pd
-            # próbuj autodetekcję separatora
+            # Jednorazowa próba: pobierz przez proxy po stronie serwera i od razu załaduj
             try:
-                df_try = _pd.read_csv(io.StringIO(txt), sep=None, engine="python")
-            except Exception:
-                # fallback sep
-                for s in (";", ",", "\t"):
+                rproxy = requests.get(proxy_url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
+                rproxy.raise_for_status()
+                txt = (rproxy.text or "").strip()
+                if txt and not txt.lstrip().startswith("<"):
+                    # autodetekcja separ. + normalize → Close/Date
                     try:
-                        df_try = _pd.read_csv(io.StringIO(txt), sep=s)
-                        break
+                        df_try = pd.read_csv(io.StringIO(txt), sep=None, engine="python")
                     except Exception:
                         df_try = None
-            if df_try is not None and not df_try.empty:
-                # normalizacja minimalna: Date/Close -> index
-                df_try.columns = [str(c).strip() for c in df_try.columns]
-                # znajdź kolumny
-                date_col = next((c for c in ("Date","Data") if c in df_try.columns), df_try.columns[0])
-                close_col = next((c for c in ("Close","Zamkniecie","Zamknięcie","Kurs","Price","Adj Close") if c in df_try.columns),
-                                 (df_try.columns[4] if df_try.shape[1] >= 5 else df_try.columns[-1]))
-                out = df_try[[date_col, close_col]].rename(columns={date_col:"Date", close_col:"Close"}).copy()
-                out["Date"] = _pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
-                out["Close"] = _pd.to_numeric(out["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
-                out = out.dropna().sort_values("Date").set_index("Date")[["Close"]]
-                if not out.empty:
-                    st.success("✅ Pobranie przez proxy powiodło się — dane załadowano automatycznie.")
-                    st.session_state.df = out
-                    st.session_state.used_source = "Stooq (proxy)"
-                    st.session_state.data_ok = True
-                    # udostępnij przycisk do pobrania CSV lokalnie
-                    csv_bytes = out.reset_index().to_csv(index=False).encode("utf-8")
-                    st.download_button("⬇️ Pobierz CSV (z serwera)", csv_bytes,
-                                       file_name=f"{sym_norm}_stooq.csv", mime="text/csv", use_container_width=True)
-                    # przerwij dalsze pokazywanie instrukcji
-                    st.stop()
-    except Exception:
-        # ignorujemy — wyświetlamy dalej instrukcję manualną
-        pass
-
-    # Jeśli proxy też nie zadziałało — wyraźna instrukcja krok po kroku
-    with st.expander("Instrukcja: jak pobrać i wgrać CSV (krok po kroku)"):
-        st.markdown(
-            "1. Kliknij **Pobierz CSV** powyżej; plik zostanie pobrany do folderu **Pobrane/Downloads**.\n\n"
-            "2. W aplikacji: w panelu po lewej kliknij **Upload CSV** (Wgraj CSV) i wybierz pobrany plik.\n\n"
-            "3. Po wgraniu kliknij **⬇️ Pobierz dane** żeby załadować plik do aplikacji.\n\n"
-            "Jeśli coś nie działa: spróbuj najpierw otworzyć link w trybie incognito lub zmienić sieć (np. użyć tetheringu)."
-        )
-    # Wyświetl oryginalny błąd
-    st.error(f"❌ Błąd wczytywania: {e}")
-
-    # Przygotuj linki do ręcznego pobrania
-    sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-    direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
-    proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
-
-    st.markdown("### 🔗 Pobierz dane ręcznie")
-    st.markdown(
-        f"- Bezpośrednio ze Stooq (otwórz w nowej karcie): "
-        f"[Pobierz CSV]({direct_url}){{:target='_blank' rel='noopener'}}",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f"- Jeśli direct nie działa (limit/anty-bot), spróbuj przez proxy: "
-        f"[Pobierz przez proxy]({proxy_url}){{:target='_blank' rel='noopener'}}",
-        unsafe_allow_html=True
-    )
-
-    st.info(
-        "Jeśli przeglądarka pobierze plik: zapisz go lokalnie (Downloads), "
-        "a następnie wgraj przyciskiem **Wgraj CSV** po lewej stronie."
-    )
-
-    # Spróbuj jednorazowo pobrać przez proxy po stronie serwera i jeśli się uda —
-    # wczytaj DF do session_state oraz udostępnij przycisk do pobrania CSV (lokalnie).
-    try:
-        import io, requests
-        rproxy = requests.get(proxy_url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
-        rproxy.raise_for_status()
-        txt = (rproxy.text or "").strip()
-        if txt and not txt.lstrip().startswith("<"):
-            import pandas as _pd
-            # próbuj autodetekcję separatora
-            try:
-                df_try = _pd.read_csv(io.StringIO(txt), sep=None, engine="python")
+                    if df_try is None or df_try.empty:
+                        for s in (";", ",", "\t"):
+                            try:
+                                df_try = pd.read_csv(io.StringIO(txt), sep=s)
+                                if not df_try.empty: break
+                            except Exception:
+                                pass
+                    if df_try is not None and not df_try.empty:
+                        df_try.columns = [str(c).strip() for c in df_try.columns]
+                        date_col = next((c for c in ("Date","Data") if c in df_try.columns), df_try.columns[0])
+                        close_col = next(
+                            (c for c in ("Close","Zamkniecie","Zamknięcie","Zamk.","Kurs","Price","Adj Close") if c in df_try.columns),
+                            (df_try.columns[4] if df_try.shape[1] >= 5 else df_try.columns[-1])
+                        )
+                        out = df_try[[date_col, close_col]].rename(columns={date_col:"Date", close_col:"Close"}).copy()
+                        out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
+                        out["Close"] = pd.to_numeric(out["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+                        out = out.dropna().sort_values("Date").set_index("Date")[["Close"]]
+                        if not out.empty:
+                            st.success("✅ Proxy działa — dane załadowano automatycznie.")
+                            st.session_state.update(df=out, used_source="Stooq (proxy)", data_ok=True)
+                            csv_bytes = out.reset_index().to_csv(index=False).encode("utf-8")
+                            st.download_button("⬇️ Pobierz CSV (z serwera)", csv_bytes,
+                                               file_name=f"{sym_norm}_stooq.csv", mime="text/csv", use_container_width=True)
+                            st.stop()
             except Exception:
-                # fallback sep
-                for s in (";", ",", "\t"):
-                    try:
-                        df_try = _pd.read_csv(io.StringIO(txt), sep=s)
-                        break
-                    except Exception:
-                        df_try = None
-            if df_try is not None and not df_try.empty:
-                # normalizacja minimalna: Date/Close -> index
-                df_try.columns = [str(c).strip() for c in df_try.columns]
-                # znajdź kolumny
-                date_col = next((c for c in ("Date","Data") if c in df_try.columns), df_try.columns[0])
-                close_col = next((c for c in ("Close","Zamkniecie","Zamknięcie","Kurs","Price","Adj Close") if c in df_try.columns),
-                                 (df_try.columns[4] if df_try.shape[1] >= 5 else df_try.columns[-1]))
-                out = df_try[[date_col, close_col]].rename(columns={date_col:"Date", close_col:"Close"}).copy()
-                out["Date"] = _pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
-                out["Close"] = _pd.to_numeric(out["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
-                out = out.dropna().sort_values("Date").set_index("Date")[["Close"]]
-                if not out.empty:
-                    st.success("✅ Pobranie przez proxy powiodło się — dane załadowano automatycznie.")
-                    st.session_state.df = out
-                    st.session_state.used_source = "Stooq (proxy)"
-                    st.session_state.data_ok = True
-                    # udostępnij przycisk do pobrania CSV lokalnie
-                    csv_bytes = out.reset_index().to_csv(index=False).encode("utf-8")
-                    st.download_button("⬇️ Pobierz CSV (z serwera)", csv_bytes,
-                                       file_name=f"{sym_norm}_stooq.csv", mime="text/csv", use_container_width=True)
-                    # przerwij dalsze pokazywanie instrukcji
-                    st.stop()
-    except Exception:
-        # ignorujemy — wyświetlamy dalej instrukcję manualną
-        pass
-
-    # Jeśli proxy też nie zadziałało — wyraźna instrukcja krok po kroku
-    with st.expander("Instrukcja: jak pobrać i wgrać CSV (krok po kroku)"):
-        st.markdown(
-            "1. Kliknij **Pobierz CSV** powyżej; plik zostanie pobrany do folderu **Pobrane/Downloads**.\n\n"
-            "2. W aplikacji: w panelu po lewej kliknij **Upload CSV** (Wgraj CSV) i wybierz pobrany plik.\n\n"
-            "3. Po wgraniu kliknij **⬇️ Pobierz dane** żeby załadować plik do aplikacji.\n\n"
-            "Jeśli coś nie działa: spróbuj najpierw otworzyć link w trybie incognito lub zmienić sieć (np. użyć tetheringu)."
-        )
+                pass  # zostawiamy instrukcję ręczną
 
     # diagnostics after successful load
     if st.session_state.data_ok and st.session_state.df is not None:
