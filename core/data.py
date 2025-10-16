@@ -70,7 +70,7 @@ def _read_text_to_df(text: str) -> pd.DataFrame | None:
 def from_stooq(symbol: str, forced_sep: str | None = None) -> pd.DataFrame:
     """Proste pobranie CSV ze Stooq, z nagłówkami i jednym proxy-fallbackiem."""
     sym = _norm_symbol(symbol)
-    url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+    url = f"stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
 
     # 1) próba bezpośrednia
     r = requests.get(url, timeout=12, headers=UA)
