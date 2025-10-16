@@ -11,24 +11,68 @@ import requests
 
 __all__ = ["from_stooq", "from_csv"]
 
+# =========================
+# Robust fetch (mirrory/proxy + nagłówki)
+# =========================
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "text/csv, text/plain; q=0.9, */*; q=0.8",
+    "Accept-Language": "pl,en;q=0.8",
+    "Referer": "https://stooq.pl/",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Connection": "keep-alive",
+}
+
+MIRRORS = [
+    "https://stooq.pl", "https://stooq.com",
+    "http://stooq.pl",  "http://stooq.com",
+]
+
+# proxy fetch (przez inną domenę; bywa pomocne przy limitach/CDN)
+PROXIES = [
+    "https://r.jina.ai/http://stooq.pl",
+    "https://r.jina.ai/http://stooq.com",
+]
+
+
+def _normalize_symbol(symbol: str) -> str:
+    return symbol.strip().lower().replace("^", "").replace("/", "").replace("=", "")
+
+
+def _fetch_stooq_text(sym: str) -> tuple[str, str]:
+    """Próbuje kilka baz (mirrory + proxy). Zwraca (tekst_csv, użyty_url)."""
+    import random
+    q = _normalize_symbol(sym)
+    bases = MIRRORS + PROXIES
+    last_err = None
+    for base in bases:
+        url = f"{base}/q/d/l/?s={q}&i=d&_={int(time.time())}{random.randint(0,9999)}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=12, allow_redirects=True)
+            r.raise_for_status()
+            text = r.text or ""
+            if not text.strip() or text.lstrip().startswith("<"):
+                last_err = f"html/empty from {url}"
+                continue
+            return text, url
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            continue
+    raise ValueError(f"Stooq: nie udało się pobrać '{sym}'. Ostatni błąd: {last_err}")
+
+
+def _clean_text_for_csv(txt: str) -> str:
+    """Usuwa BOM/CRLF/puste linie."""
+    txt = txt.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+    return "\n".join(lines)
+
 
 # =========================
-# helpers
+# Normalizacja i parsery
 # =========================
-
-def _build_stooq_url(symbol: str) -> str:
-    """Normalizuje ticker i buduje URL do dziennych danych Stooq, z cache-busterem."""
-    sym = (
-        symbol.strip()
-        .lower()
-        .replace("^", "")
-        .replace("/", "")
-        .replace("=", "")
-    )
-    return f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
-
-
-# --- w core/data.py ---
 
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -50,7 +94,7 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
 
     # możliwe warianty 'Close'
     close_candidates = (
-        "Close", "Zamkniecie", "Zamknięcie", "Zamkn.", "Zamk", "Kurs", "Price"
+        "Close", "Zamkniecie", "Zamknięcie", "Zamk.", "Zamk", "Kurs", "Price"
     )
     close_col = None
     for cand in close_candidates:
@@ -89,12 +133,10 @@ def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     return df[["Close"]]
 
 
-
-
 def _sniff_sep(sample: str) -> Optional[str]:
     """Wykrywa separator CSV z próbki tekstu."""
     try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=";, \t")
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,\t ")
         return dialect.delimiter
     except Exception:
         # heurystyka z nagłówka (pierwsza linia)
@@ -161,98 +203,53 @@ def _manual_parse(text: str) -> Optional[pd.DataFrame]:
 
 
 # =========================
-# public api
+# Public API
 # =========================
 
 def from_stooq(symbol: str, forced_sep: str | None = None) -> pd.DataFrame:
     """
-    Pobierz dzienne notowania ze Stooq i zwróć DataFrame [Date index, Close].
-    Opcjonalnie można wymusić separator: ',', ';' lub '\\t'.
+    Odporny czytnik CSV ze Stooq (mirrory/proxy + autodetekcja separatora).
+    Zwraca DataFrame z ['Close'] i indeksem Date.
     """
-    url = _build_stooq_url(symbol)
+    # pobierz tekst z kilku źródeł
+    text, used_url = _fetch_stooq_text(symbol)
+    text = _clean_text_for_csv(text)
 
-    # (A) jeśli wymuszono separator — spróbuj od razu tym trybem
-    if forced_sep:
-        try:
-            df_direct = pd.read_csv(url, sep=forced_sep, engine="python")
-            if df_direct is not None and not df_direct.empty and df_direct.shape[1] >= 2:
-                return _normalize_df(df_direct)
-        except Exception:
-            pass  # przejdź do ogólnych prób
-
-    # (B) autodetekcja Pandas
-    try:
-        df_direct = pd.read_csv(url, sep=None, engine="python")
-        if df_direct is not None and not df_direct.empty and df_direct.shape[1] >= 2:
-            return _normalize_df(df_direct)
-    except Exception:
-        pass
-
-    # (C) pobierz treść i próbuj ręcznie
-    try:
-        resp = requests.get(
-            url,
-            timeout=12,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "text/csv,text/plain,*/*;q=0.9",
-                "Referer": "https://stooq.pl/",
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-                "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.8",
-            },
-        )
-        resp.raise_for_status()
-    except Exception as e:
-        raise ValueError(f"Stooq: błąd HTTP przy pobieraniu ({url}): {e}")
-
-    raw = resp.content or b""
-    text = (resp.text or "").strip()
-    if not raw or not text or text.lstrip().startswith("<"):
-        raise ValueError(f"Stooq: pusty/HTML-owy response ({url}).")
-
-    # (C1) prosto z tekstu
+    # jeśli wymuszony separator – użyj od razu
     if forced_sep:
         try:
             df = pd.read_csv(io.StringIO(text), sep=forced_sep, engine="python")
             if df is not None and not df.empty and df.shape[1] >= 2:
                 return _normalize_df(df)
         except Exception:
-            pass
-    else:
-        df = _try_read_text(text)
-        if df is not None:
-            return _normalize_df(df)
+            pass  # spróbuj dalej
 
-    # (C2) alternatywne kodowania
+    # 1) parser tolerancyjny: autodetekcja
+    df = _try_read_text(text)
+    if df is not None:
+        return _normalize_df(df)
+
+    # 2) alternatywne kodowania + manualny parser
     for enc in ("utf-8-sig", "cp1250", "iso-8859-2"):
         try:
-            decoded = raw.decode(enc, errors="ignore")
+            decoded = text.encode("utf-8", errors="ignore").decode(enc, errors="ignore")
         except Exception:
-            continue
-
-        if forced_sep:
-            try:
-                df = pd.read_csv(io.StringIO(decoded), sep=forced_sep, engine="python")
-                if df is not None and not df.empty and df.shape[1] >= 2:
-                    return _normalize_df(df)
-            except Exception:
-                pass
-        else:
-            df = _try_read_text(decoded)
-            if df is not None:
-                return _normalize_df(df)
-
+            decoded = text
+        # autodetekcja
+        df2 = _try_read_text(decoded)
+        if df2 is not None:
+            return _normalize_df(df2)
+        # manual
         manual = _manual_parse(decoded)
         if manual is not None and not manual.empty:
             return _normalize_df(manual)
 
-    # (C3) ostatnia próba: manual na oryginalnym tekście
+    # 3) ostatnia próba – manual na oryginalnym tekście
     manual = _manual_parse(text)
     if manual is not None and not manual.empty:
         return _normalize_df(manual)
 
-    raise ValueError(f"Nie udało się sparsować CSV ze Stooq ({url}).")
+    raise ValueError(f"Nie udało się sparsować CSV ze Stooq ({used_url}).")
 
 
 def from_csv(file) -> pd.DataFrame:
