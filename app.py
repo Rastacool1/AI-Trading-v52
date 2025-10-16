@@ -301,8 +301,6 @@ with left:
             "3. Po wgraniu kliknij **⬇️ Pobierz dane** żeby załadować plik do aplikacji.\n\n"
             "Jeśli coś nie działa: spróbuj najpierw otworzyć link w trybie incognito lub zmienić sieć (np. użyć tetheringu)."
         )
-
-
     # Wyświetl oryginalny błąd
     st.error(f"❌ Błąd wczytywania: {e}")
 
