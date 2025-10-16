@@ -142,9 +142,11 @@ with left:
     src = st.selectbox("Źródło", ["Stooq", "CSV"])
     symbol = st.text_input("Symbol", value="btcpln", help="np. btcpln / eurusd / ^spx", placeholder="ticker")
     csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"])
+
+    # 👇 ten blok MUSI być wcięty (4 spacje) – pokazuje nazwę pliku po wgraniu
     if csv_file is not None:
-    size_kb = f"{(csv_file.size/1024):.1f} KB" if hasattr(csv_file, 'size') else ""
-    st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
+        size_kb = f"{(csv_file.size/1024):.1f} KB" if hasattr(csv_file, "size") else ""
+        st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
 
     # separator (musi być zdefiniowany zanim użyjemy go w kliknięciu)
     sep_choice = st.selectbox("Separator (opcjonalnie)", ["Auto", ",", ";", "\\t"], index=0,
