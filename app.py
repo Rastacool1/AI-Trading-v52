@@ -142,6 +142,9 @@ with left:
     src = st.selectbox("Źródło", ["Stooq", "CSV"])
     symbol = st.text_input("Symbol", value="btcpln", help="np. btcpln / eurusd / ^spx", placeholder="ticker")
     csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"])
+    if csv_file is not None:
+    size_kb = f"{(csv_file.size/1024):.1f} KB" if hasattr(csv_file, 'size') else ""
+    st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
 
     # separator (musi być zdefiniowany zanim użyjemy go w kliknięciu)
     sep_choice = st.selectbox("Separator (opcjonalnie)", ["Auto", ",", ";", "\\t"], index=0,
@@ -181,25 +184,24 @@ with left:
                     st.session_state.used_source = "CSV"
                     st.session_state.data_ok = True
                     st.success(f"✅ Wczytano dane z CSV: {len(_df)} wierszy.")
-            else:  # Stooq
+              else:  # Stooq
                 forced = None
                 if sep_choice != "Auto":
                     forced = "\t" if sep_choice == "\\t" else sep_choice
                 else:
-                    # Auto: zrób szybki podgląd i zgadnij separator
+                    # Auto: szybki podgląd nagłówka i zgadnij separator
                     import requests, time
                     sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
                     test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
                     r = requests.get(test_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
                     r.raise_for_status()
-                    head = (r.text or "").splitlines()[:1]
-                    header = head[0] if head else ""
-                    if ";" in header: forced = ";"
+                    header = (r.text or "").splitlines()[:1]
+                    header = header[0] if header else ""
+                    if ";" in header:   forced = ";"
                     elif "," in header: forced = ","
                     elif "\t" in header: forced = "\t"
-                    # jeśli header pusty/HTML – oddaj czytelny błąd
                     if not header or header.lstrip().startswith("<"):
-                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie za chwilę lub użyj CSV.")
+                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie lub użyj CSV.")
             
                 _df = from_stooq(symbol, forced_sep=forced)
                 st.session_state.df = _df
