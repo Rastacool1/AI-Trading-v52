@@ -68,9 +68,13 @@ def _read_text_to_df(text: str) -> pd.DataFrame | None:
     return None
 
 def from_stooq(symbol: str, forced_sep: str | None = None) -> pd.DataFrame:
-    """Proste pobranie CSV ze Stooq, z nagłówkami i jednym proxy-fallbackiem."""
+    """
+    Proste pobranie CSV ze Stooq, z nagłówkami i jednym proxy-fallbackiem.
+    Wymaga helperów: _norm_symbol(), _read_text_to_df(), UA (nagłówki) zdefiniowanych wyżej.
+    """
+    import io, time
     sym = _norm_symbol(symbol)
-    url = f"stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+    url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
 
     # 1) próba bezpośrednia
     r = requests.get(url, timeout=12, headers=UA)
@@ -87,14 +91,24 @@ def from_stooq(symbol: str, forced_sep: str | None = None) -> pd.DataFrame:
     if not text or text.lstrip().startswith("<"):
         raise ValueError(f"Stooq: pusty/HTML-owy response ({url}).")
 
+    # parsowanie CSV
     if forced_sep:
         df = pd.read_csv(io.StringIO(text), sep=forced_sep, engine="python")
     else:
         df = _read_text_to_df(text)
         if df is None:
-            raise ValueError("Nie udało się rozpoznać separatora.")
+            # ostatnia próba: proste sepy
+            for sep in (";", ",", "\t"):
+                try:
+                    df = pd.read_csv(io.StringIO(text), sep=sep)
+                    break
+                except Exception:
+                    df = None
+            if df is None:
+                raise ValueError("Nie udało się rozpoznać separatora.")
 
     return _normalize_df(df)
+
 
 def from_csv(file) -> pd.DataFrame:
     """Upload CSV → Date/Data + Close/Zamkniecie (lub Kurs/Price)."""
