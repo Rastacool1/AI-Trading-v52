@@ -81,7 +81,8 @@ label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput l
 # -----------------------------------------------------------------------------
 # TOP BAR (logo + main actions)
 # -----------------------------------------------------------------------------
-tb1, tb2, tb3, tb4, tb5 = st.columns([2.6, 1.2, 1.0, 1.0, 1.0], gap="small")
+# równe kolumny na top-bar
+tb1, tb2, tb3, tb4, tb5 = st.columns(5, gap="small")
 with tb1:
     st.markdown(
         "<div class='topbar card-2'>"
