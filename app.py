@@ -1,4 +1,4 @@
-# app.py — AI Trading Edge • Excel-style Dark Dashboard (ONLY Stooq/CSV)
+# app.py — AI Trading Edge • Dark Dashboard (Stooq/CSV + manual links + Light/Full Auto-Tune)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -50,6 +50,7 @@ html, body, .block-container{background:var(--bg) !important; color:var(--text) 
 [data-testid="stFileUploaderDropzone"] svg { display: none !important; }        /* ikona chmury off */
 [data-testid="stFileUploaderInstructions"] { display:none !important; }         /* instrukcje off */
 [data-testid="stFileUploaderDropzone"] label { display:none !important; }       /* label w polu off */
+
 /* Cards */
 .card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:10px 12px; box-shadow:0 6px 16px rgba(0,0,0,.25);}
 .card-2{background:var(--panel-2); border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
@@ -141,13 +142,13 @@ left, right = st.columns([1.0, 3.0], gap="large")
 
 # --- Left: data source & download gate (ONLY Stooq/CSV) ---
 with left:
-    import requests, time, io  # <-- potrzebne dla testu i fallbacku proxy
+    import requests, time, io  # dla testu i proxy fallbacku
 
     src = st.selectbox("Źródło", ["Stooq", "CSV"])
     symbol = st.text_input("Symbol", value="btcpln", help="np. btcpln / eurusd / ^spx", placeholder="ticker")
     csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"])
 
-    # pokaż nazwę wgranego pliku (bez wielkiego białego pola)
+    # nazwa wgranego pliku (bez dużego białego pola)
     if csv_file is not None:
         size_kb = f"{(getattr(csv_file, 'size', 0)/1024):.1f} KB" if hasattr(csv_file, "size") else ""
         st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
@@ -187,7 +188,7 @@ with left:
             else:
                 # Stooq
                 sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-                # Jeśli Auto — zgadnij separator na podstawie nagłówka
+                # Auto: zgadnij separator na podstawie nagłówka
                 forced = None
                 if sep_choice != "Auto":
                     forced = "\t" if sep_choice == "\\t" else sep_choice
@@ -213,7 +214,7 @@ with left:
             # Oryginalny błąd
             st.error(f"❌ Błąd wczytywania: {e}")
 
-            # Klikalne linki do ręcznego pobrania (otwierają w nowej karcie)
+            # Klikalne linki do ręcznego pobrania (nowa karta)
             sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
             direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
             proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
@@ -346,7 +347,7 @@ close = df["Close"].dropna()
 # -----------------------------------------------------------------------------
 try:
     vix = from_stooq("^vix")["Close"]
-    sent = heuristic_from_vix(vix).reindex(close.index).fillna(method="ffill")
+    sent = heuristic_from_vix(vix).reindex(close.index).ffill()
 except Exception:
     sent = pd.Series(0, index=close.index)
 
@@ -476,7 +477,7 @@ st.plotly_chart(feq, use_container_width=True, theme=None)
 # AUTO-TUNE (on demand) — Light & Full + safe rerun
 # -----------------------------------------------------------------------------
 def _quick_space():
-    """Szybki, mały grid (ok. kilkadziesiąt kombinacji) — wyniki w ~15–40s."""
+    """Szybki, mały grid (kilkadziesiąt kombinacji)."""
     return {
         "rsi_window": [10, 14, 20],
         "rsi_buy":    [25, 30, 35],
@@ -573,7 +574,7 @@ def _autotune(profile: str):
             folds = 2
             cost  = 10
         else:  # Full
-            space = grid_space()   # korzystamy z Twojej pełnej przestrzeni
+            space = grid_space()
             folds = 4
             cost  = 10
 
@@ -590,7 +591,7 @@ def _autotune(profile: str):
         st.error(f"Auto-Tune błąd: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# — przyciski
+# — przyciski Auto-Tune
 if auto_tune_light_click:
     _autotune("Light")
 elif auto_tune_full_click:
