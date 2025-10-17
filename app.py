@@ -1,350 +1,184 @@
-# app.py — AI Trading Edge • Dark Dashboard (Stooq/CSV + manual links + Light/Full Auto-Tune)
+# app.py — AI Trader by SO • v4.9.1 UI + silnik v52 (Stooq/CSV + proxy + Auto-Tune)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import requests, time, io
 
 from core.data import from_csv, from_stooq
-from core.signals import (
-    SignalParams, compute_features, partial_signals,
-    ensemble_score, dynamic_thresholds, confidence_and_explain
-)
+from core.signals import SignalParams, compute_features, partial_signals, ensemble_score, dynamic_thresholds
 from core.sentiment import heuristic_from_vix
 from core.backtest import backtest, metrics
 from core.autotune import grid_space, walk_forward
 from core.risk import volatility_target_position
 
 
-# -----------------------------------------------------------------------------
-# PAGE & THEME
-# -----------------------------------------------------------------------------
-st.set_page_config(page_title="AI Trading Edge — Dashboard", layout="wide")
-
+# ---------------------------------------------------------------------
+# PAGE STYLE — motyw w stylu v4.9.1
+# ---------------------------------------------------------------------
+st.set_page_config(page_title="AI Trader by SO — v4.9.1", layout="wide")
 st.markdown("""
 <style>
 :root{
-  --bg:#111317; --panel:#1A1F26; --panel-2:#171B21; --text:#E8ECF1; --muted:#AAB2BE;
-  --accent:#3BAFDA; --good:#00C389; --bad:#FF5C7A; --amber:#CBA85B; --border:rgba(255,255,255,.06);
+  --bg:#0e1117; --panel:#151a21; --panel-2:#10151c; --text:#e6e9f0; --muted:#9aa3af;
+  --accent:#3BAFDA; --good:#00C389; --bad:#FF5C7A; --amber:#CBA85B; --border:rgba(255,255,255,.08);
 }
 html, body, .block-container{background:var(--bg) !important; color:var(--text) !important;}
-.block-container{padding-top:66px; max-width:1500px;}
-
-/* Top bar */
-.topbar{position:fixed; top:0; left:0; right:0; z-index:1000;
-  background:linear-gradient(180deg, rgba(26,31,38,.97) 0%, rgba(26,31,38,.9) 100%);
-  border-bottom:1px solid var(--border); backdrop-filter:blur(6px); padding:10px 14px;}
-.logo{display:flex; gap:10px; align-items:center;}
-.logo .mark{width:36px; height:36px; border-radius:8px; background:#1F2530; display:flex; align-items:center; justify-content:center; font-weight:800; color:var(--amber);}
-.logo .title{font-weight:800; font-size:1.0rem; letter-spacing:.3px;}
-/* Topbar buttons – równe wymiary */
-.topbar .stButton > button { width:100% !important; height:40px !important; }
-
-/* CSV uploader – kompakt, bez dużego białego pola/instrukcji */
-[data-testid="stFileUploaderDropzone"]{
-  background: transparent !important;
-  border: 1px dashed rgba(203,168,91,.35) !important;
-  border-radius: 10px !important;
-  min-height: 40px !important;
-  padding: 6px 10px !important;
-}
-[data-testid="stFileUploaderDropzone"] * { color: var(--amber) !important; }
-[data-testid="stFileUploaderDropzone"] svg { display: none !important; }        /* ikona chmury off */
-[data-testid="stFileUploaderInstructions"] { display:none !important; }         /* instrukcje off */
-[data-testid="stFileUploaderDropzone"] label { display:none !important; }       /* label w polu off */
-
-/* Cards */
-.card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:10px 12px; box-shadow:0 6px 16px rgba(0,0,0,.25);}
-.card-2{background:var(--panel-2); border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
-.h1{font-weight:800; font-size:1.06rem; letter-spacing:.2px; margin-bottom:6px;}
-.h2{font-weight:700; font-size:.96rem; letter-spacing:.2px; margin-bottom:4px;}
-.sub{color:var(--muted); font-size:.86rem;}
-
-/* Inputs */
+.block-container{max-width:1200px; padding-top:14px;}
+.title-xl{font-weight:900; font-size:2.1rem; letter-spacing:.2px; margin:6px 0 18px;}
+.kicker{color:var(--muted); font-weight:700; font-size:1rem; letter-spacing:.12rem; text-transform:uppercase;}
+.card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 16px; box-shadow:0 6px 18px rgba(0,0,0,.30);}
+.section-title{font-size:1.2rem; font-weight:900; margin-bottom:12px;}
 label, .stSlider label, .stSelectbox label, .stNumberInput label, .stTextInput label { color: var(--text) !important; font-weight:600; }
 .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"]{
   background:#0E1115 !important; color:var(--text) !important; border-radius:10px; border:1px solid var(--border) !important;
 }
-.stFileUploader, .stFileUploader div[data-testid="stFileUploaderDropzone"]{
-  background:linear-gradient(180deg, rgba(203,168,91,.18), rgba(203,168,91,.10)) !important;
-  border:1px dashed rgba(203,168,91,.65) !important; border-radius:12px !important; color:var(--amber) !important;
+[data-testid="stFileUploaderDropzone"]{
+  background:transparent !important; border:1px dashed rgba(203,168,91,.35) !important;
+  border-radius:10px !important; min-height:40px !important; padding:6px 10px !important;
 }
-
-/* Sliders (compact) */
-.stSlider > div[data-baseweb="slider"]{ padding:2px 4px; }
-.stSlider [data-baseweb="slider"] div{ background-color: transparent; }
-.stSlider [role="slider"]{ background:var(--accent) !important; box-shadow:0 0 0 2px rgba(59,175,218,.25); }
-.stSlider .css-1dp5vir, .stSlider .e1yxm3t61{ color:var(--text) !important; }
-
-/* Buttons */
-.stButton button{background:var(--accent); color:#0B0E12; border:none; border-radius:10px; padding:.48rem .8rem; font-weight:800; font-size:.9rem;}
-.stButton button:hover{filter:brightness(1.05); transform:translateY(-1px);}
-.btn-ghost button{background:#232A34; color:var(--text);}
-.btn-amber button{background:var(--amber); color:#101419;}
-.btn-green button{background:var(--good); color:#07140F;}
-
-/* Recommendation */
-.reco{border:1px solid rgba(203,168,91,.35); background:linear-gradient(180deg, rgba(203,168,91,.14), rgba(203,168,91,.06));}
-.reco.good{border-color:rgba(0,195,137,.35); background:linear-gradient(180deg, rgba(0,195,137,.14), rgba(0,195,137,.06));}
-.reco.bad{border-color:rgba(255,92,122,.35); background:linear-gradient(180deg, rgba(255,92,122,.14), rgba(255,92,122,.06));}
-
-/* Parameter grid: left label + columns with sliders */
-.row{display:grid; grid-template-columns: 90px 1fr; gap:10px; align-items:center; margin:2px 0;}
-.row .name{font-weight:800; color:var(--text); text-transform:uppercase; font-size:.85rem; letter-spacing:.4px;}
+[data-testid="stFileUploaderInstructions"], [data-testid="stFileUploaderDropzone"] label,
+[data-testid="stFileUploaderDropzone"] svg{ display:none !important; }
+.btn-accent > button{ background:var(--accent); color:#081019; border:none; font-weight:900; width:100%; border-radius:10px; padding:.5rem .8rem;}
+.btn-ghost > button{ background:#1c222b; color:var(--text); border:1px solid var(--border); width:100%; border-radius:10px; padding:.5rem .8rem;}
+.stepper{display:flex; gap:8px; align-items:center;}
+.stepper .val{min-width:56px; text-align:center; padding:6px 8px; background:#0e1218; border:1px solid var(--border); border-radius:8px;}
+.stepper .btn{background:#1f272f; border:1px solid var(--border); padding:6px 10px; border-radius:8px; font-weight:900;}
+.stepper .lab{min-width:110px; color:var(--muted); font-weight:700; letter-spacing:.02rem;}
+.reco.good{border:1px solid rgba(0,195,137,.4); background:linear-gradient(180deg, rgba(0,195,137,.18), rgba(0,195,137,.05));}
+.reco.bad{border:1px solid rgba(255,92,122,.4); background:linear-gradient(180deg, rgba(255,92,122,.18), rgba(255,92,122,.05));}
 </style>
 """, unsafe_allow_html=True)
 
-
-# -----------------------------------------------------------------------------
-# TOP BAR (logo + main actions) — równe szerokości przycisków
-# -----------------------------------------------------------------------------
-tb1, tb2, tb3, tb4, tb5, tb6 = st.columns([2.4, 1, 1, 1, 1, 1], gap="small")
-
-with tb1:
-    st.markdown(
-        "<div class='topbar card-2'>"
-        "<div class='logo'><div class='mark'>AI</div>"
-        "<div class='title'>Trading Edge — Dashboard</div></div>"
-        "</div>", unsafe_allow_html=True
-    )
-
-with tb2:
-    st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    auto_tune_light_click = st.button("⚡ Light Auto-Tune", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with tb3:
-    st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    auto_tune_full_click = st.button("🔁 Pełny Auto-Tune", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with tb4:
-    st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    recalc_click = st.button("⚡ Przelicz", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with tb5:
-    st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    autoscale_click = st.button("🖼️ Autoskaluj", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with tb6:
-    st.markdown("<div class='topbar card-2'>", unsafe_allow_html=True)
-    export_placeholder = st.empty()
-    st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("<div class='kicker'>AI Trader by SO — v4.9.1</div>", unsafe_allow_html=True)
+st.markdown("<div class='title-xl'>AUTO-TUNE AI • %cut-loss • %trailing • OOS</div>", unsafe_allow_html=True)
 
 
-# -----------------------------------------------------------------------------
-# STARTER PANEL (left: source & download; right: compact parameter grid)
-# -----------------------------------------------------------------------------
-st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.markdown("<div class='h1'>⚙️ Ustawienia / Filtry</div>", unsafe_allow_html=True)
+# ---------------------------------------------------------------------
+# INPUT DATA SECTION
+# ---------------------------------------------------------------------
+st.markdown("<div class='card'><div class='section-title'>Input data</div>", unsafe_allow_html=True)
+c1, c2, c3, c4 = st.columns([1.2, 1.0, 1.4, 1.2], gap="medium")
 
-left, right = st.columns([1.0, 3.0], gap="large")
+with c1:
+    src = st.radio("Source", ["Upload CSV", "Stooq"], horizontal=True, index=1)
+with c2:
+    interval = st.selectbox("Interval", ["D1"], index=0, disabled=True)
+with c3:
+    start_bt = st.text_input("Backtest start (YYYY-MM-DD)", "2022-01-01")
+with c4:
+    symbol = st.text_input("Ticker", "btcpln")
 
-# --- Left: data source & download gate (ONLY Stooq/CSV) ---
-with left:
-    import requests, time, io  # dla testu i proxy fallbacku
+st.write("")
+cA, cB = st.columns([1.4, 2.6], gap="large")
 
-    src = st.selectbox("Źródło", ["Stooq", "CSV"])
-    symbol = st.text_input("Symbol", value="btcpln", help="np. btcpln / eurusd / ^spx", placeholder="ticker")
-    csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"])
+with cA:
+    if src == "Upload CSV":
+        csv_file = st.file_uploader("Upload CSV", type=["csv"])
+        if csv_file is not None:
+            size_kb = f"{(getattr(csv_file,'size',0)/1024):.1f} KB"
+            st.caption(f"📎 {csv_file.name} • {size_kb}")
+    else:
+        st.markdown("<div class='btn-accent'>", unsafe_allow_html=True)
+        get_stooq = st.button("📥 Stooq", use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # nazwa wgranego pliku (bez dużego białego pola)
-    if csv_file is not None:
-        size_kb = f"{(getattr(csv_file, 'size', 0)/1024):.1f} KB" if hasattr(csv_file, "size") else ""
-        st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
-
-    # separator (zanim użyjemy go w kliknięciu)
-    sep_choice = st.selectbox("Separator (opcjonalnie)", ["Auto", ",", ";", "\\t"], index=0,
-                              help="Wymuś separator jeśli parser się myli")
-
-    # podgląd surowego CSV ze Stooq
-    if st.button("🔎 Test Stooq (podgląd pierwszych linii)", use_container_width=True):
+with cB:
+    sep_choice = st.selectbox("Separator", ["Auto", ",", ";", "\\t"], index=0)
+    if st.button("🔎 Preview first lines (Stooq)", key="pv", use_container_width=True):
         try:
             sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-            test_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
-            r = requests.get(test_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
+            url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+            r = requests.get(url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
             r.raise_for_status()
-            preview = "\n".join((r.text or "").splitlines()[:5])
-            st.code(preview or "(pusto)", language="text")
+            st.code("\n".join((r.text or "").splitlines()[:5]) or "(empty)")
         except Exception as e:
-            st.error(f"Test nie powiódł się: {e}")
+            st.error(f"Preview error: {e}")
 
-    # session state for data gate
-    st.session_state.setdefault("data_ok", False)
-    st.session_state.setdefault("df", None)
-    st.session_state.setdefault("used_source", None)
+# stan sesji
+st.session_state.setdefault("data_ok", False)
+st.session_state.setdefault("df", None)
+st.session_state.setdefault("used_source", None)
 
-    # POBIERZ DANE
-    if st.button("⬇️ Pobierz dane", use_container_width=True):
-        try:
-            if src == "CSV":
-                if csv_file is None:
-                    st.warning("Wgraj plik CSV z kolumnami Date/Data i Close/Zamknięcie.")
-                    st.session_state.update(data_ok=False, df=None, used_source=None)
-                else:
-                    _df = from_csv(csv_file)
-                    st.session_state.update(df=_df, used_source="CSV", data_ok=True)
-                    st.success(f"✅ Wczytano dane z CSV: {len(_df)} wierszy.")
+st.markdown("<div class='btn-ghost'>", unsafe_allow_html=True)
+load_click = st.button("Load data", use_container_width=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+if load_click or (src == "Stooq" and 'get_stooq' in locals() and get_stooq):
+    try:
+        if src == "Upload CSV":
+            if not csv_file:
+                st.warning("Wgraj CSV z kolumnami Date/Data i Close/Zamknięcie.")
+                st.session_state.update(data_ok=False, df=None, used_source=None)
             else:
-                # Stooq
-                sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-                # Auto: zgadnij separator na podstawie nagłówka
-                forced = None
-                if sep_choice != "Auto":
-                    forced = "\t" if sep_choice == "\\t" else sep_choice
-                else:
-                    sniff_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
-                    r = requests.get(sniff_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
-                    r.raise_for_status()
-                    header = (r.text or "").splitlines()[0] if (r.text or "") else ""
-                    if ";" in header: forced = ";"
-                    elif "," in header: forced = ","
-                    elif "\t" in header: forced = "\t"
-                    if not header or header.lstrip().startswith("<"):
-                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie lub użyj CSV.")
+                df = from_csv(csv_file)
+                st.session_state.update(df=df, data_ok=True, used_source="CSV")
+                st.success(f"✅ CSV loaded: {len(df)} rows.")
+        else:
+            forced = None
+            if sep_choice != "Auto":
+                forced = "\t" if sep_choice == "\\t" else sep_choice
+            df = from_stooq(symbol, forced_sep=forced)
+            st.session_state.update(df=df, data_ok=True, used_source="Stooq")
+            st.success(f"✅ Stooq OK: {len(df)} rows.")
+    except Exception as e:
+        st.session_state.update(data_ok=False, df=None, used_source=None)
+        st.error(f"❌ Load error: {e}")
+        sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+        direct = f"https://stooq.pl/q/d/l/?s={sym}&i=d"
+        proxy  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym}&i=d"
+        st.markdown(f"[Pobierz CSV (Stooq)]({direct})  •  [Proxy]({proxy})")
 
-                _df = from_stooq(symbol, forced_sep=forced)
-                st.session_state.update(df=_df, used_source="Stooq", data_ok=True)
-                st.success(f"✅ Pobranie OK ze Stooq: {len(_df)} wierszy. (sep = {forced or 'auto'})")
+st.markdown("</div>", unsafe_allow_html=True)
 
-        except Exception as e:
-            # RESET stanu
-            st.session_state.update(data_ok=False, df=None, used_source=None)
-
-            # Oryginalny błąd
-            st.error(f"❌ Błąd wczytywania: {e}")
-
-            # Klikalne linki do ręcznego pobrania (nowa karta)
-            sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
-            direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
-            proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
-
-            st.markdown("### 🔗 Pobierz dane ręcznie")
-            st.markdown(
-                f"<a href='{direct_url}' target='_blank' rel='noopener'>Pobierz CSV (Stooq)</a>",
-                unsafe_allow_html=True
-            )
-            st.markdown(
-                f"<a href='{proxy_url}' target='_blank' rel='noopener'>Pobierz przez proxy</a>",
-                unsafe_allow_html=True
-            )
-            st.info(
-                "Po pobraniu zapisz plik lokalnie i **wgraj go** przyciskiem *CSV (Date/Data, Close/Zamknięcie)* po lewej."
-            )
-
-            # Jednorazowa próba: pobierz przez proxy po stronie serwera i od razu załaduj
-            try:
-                rproxy = requests.get(proxy_url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
-                rproxy.raise_for_status()
-                txt = (rproxy.text or "").strip()
-                if txt and not txt.lstrip().startswith("<"):
-                    # autodetekcja separ. + normalize → Close/Date
-                    try:
-                        df_try = pd.read_csv(io.StringIO(txt), sep=None, engine="python")
-                    except Exception:
-                        df_try = None
-                    if df_try is None or df_try.empty:
-                        for s in (";", ",", "\t"):
-                            try:
-                                df_try = pd.read_csv(io.StringIO(txt), sep=s)
-                                if not df_try.empty: break
-                            except Exception:
-                                pass
-                    if df_try is not None and not df_try.empty:
-                        df_try.columns = [str(c).strip() for c in df_try.columns]
-                        date_col = next((c for c in ("Date","Data") if c in df_try.columns), df_try.columns[0])
-                        close_col = next(
-                            (c for c in ("Close","Zamkniecie","Zamknięcie","Zamk.","Kurs","Price","Adj Close") if c in df_try.columns),
-                            (df_try.columns[4] if df_try.shape[1] >= 5 else df_try.columns[-1])
-                        )
-                        out = df_try[[date_col, close_col]].rename(columns={date_col:"Date", close_col:"Close"}).copy()
-                        out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
-                        out["Close"] = pd.to_numeric(out["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
-                        out = out.dropna().sort_values("Date").set_index("Date")[["Close"]]
-                        if not out.empty:
-                            st.success("✅ Proxy działa — dane załadowano automatycznie.")
-                            st.session_state.update(df=out, used_source="Stooq (proxy)", data_ok=True)
-                            csv_bytes = out.reset_index().to_csv(index=False).encode("utf-8")
-                            st.download_button("⬇️ Pobierz CSV (z serwera)", csv_bytes,
-                                               file_name=f"{sym_norm}_stooq.csv", mime="text/csv", use_container_width=True)
-                            st.stop()
-            except Exception:
-                pass  # zostawiamy instrukcję ręczną
-
-    # diagnostics after successful load
-    if st.session_state.data_ok and st.session_state.df is not None:
-        _df = st.session_state.df
-        st.caption("ℹ️ Podsumowanie danych")
-        cA, cB = st.columns(2)
-        with cA:
-            st.write(f"Źródło: **{st.session_state.used_source}**")
-            st.write(f"Wiersze: **{len(_df)}**")
-        with cB:
-            st.write(f"Zakres: **{_df.index.min().date()} → {_df.index.max().date()}**")
-            st.write(f"Ostatnie Close: **{float(_df['Close'].iloc[-1]):,.4f}**")
-
-# --- Right: compact parameter grid (names left, sliders inline) ---
-with right:
-    p = SignalParams()
-
-    # RSI
-    st.markdown("<div class='row'><div class='name'>RSI</div>", unsafe_allow_html=True)
-    r1, r2, r3 = st.columns([1,1,1], gap="small")
-    with r1: p.rsi_window = st.slider("RSI window", 5, 30, p.rsi_window, key="rsi_w")
-    with r2: p.rsi_buy    = st.slider("RSI BUY",    10, 50, p.rsi_buy, key="rsi_b")
-    with r3: p.rsi_sell   = st.slider("RSI SELL",   50, 90, p.rsi_sell, key="rsi_s")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # MA
-    st.markdown("<div class='row'><div class='name'>MA</div>", unsafe_allow_html=True)
-    m1, m2, m3 = st.columns([1,1,1], gap="small")
-    with m1: p.ma_fast = st.slider("MA fast", 5, 50, p.ma_fast, key="ma_f")
-    with m2: p.ma_mid  = st.slider("MA mid", 20, 100, p.ma_mid, key="ma_m")
-    with m3: p.ma_slow = st.slider("MA slow", 20, 250, p.ma_slow, key="ma_s")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # BB
-    st.markdown("<div class='row'><div class='name'>BB</div>", unsafe_allow_html=True)
-    b1, b2 = st.columns([1,1], gap="small")
-    with b1: p.bb_window = st.slider("BB window", 10, 40, p.bb_window, key="bb_w")
-    with b2: p.bb_std    = st.slider("BB std",    1.0, 3.0, p.bb_std, key="bb_s")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Wagi
-    st.markdown("<div class='row'><div class='name'>Wagi</div>", unsafe_allow_html=True)
-    w1, w2, w3, w4, w5 = st.columns([1,1,1,1,1], gap="small")
-    with w1: p.w_rsi      = st.slider("w_rsi",      0.0, 1.0, p.w_rsi, key="wg_rsi")
-    with w2: p.w_ma       = st.slider("w_ma",       0.0, 1.0, p.w_ma,  key="wg_ma")
-    with w3: p.w_bb       = st.slider("w_bb",       0.0, 1.0, p.w_bb,  key="wg_bb")
-    with w4: p.w_breakout = st.slider("w_breakout", 0.0, 1.0, p.w_breakout, key="wg_br")
-    with w5: p.w_sent     = st.slider("w_sent",     0.0, 1.0, p.w_sent, key="wg_se")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Progi (percentyle)
-    st.markdown("<div class='row'><div class='name'>Progi</div>", unsafe_allow_html=True)
-    pr1, pr2 = st.columns([1,1], gap="small")
-    with pr1: p.percentile_mode = st.checkbox("Progi dynamiczne", value=True, key="perc_on")
-    with pr2: p.percentile_window = st.slider("Okno percentyli", 30, 180, p.percentile_window, key="perc_win")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)  # /card
-
-
-# -----------------------------------------------------------------------------
-# DATA GATE — require explicit download first
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# DATA GATE
+# ---------------------------------------------------------------------
 if not st.session_state.get("data_ok") or st.session_state.get("df") is None:
-    st.info("Najpierw wybierz **Źródło** i **Symbol/CSV**, a następnie kliknij **„Pobierz dane”**.")
+    st.info("Najpierw wybierz **Source** i kliknij **Load data**.")
     st.stop()
 
 df = st.session_state.df.copy()
-used_source = st.session_state.used_source or "Stooq"
 close = df["Close"].dropna()
 
 
-# -----------------------------------------------------------------------------
-# SENTIMENT (optional, silent fail)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# PARAMETERS & RISK (v4.9.1 style)
+# ---------------------------------------------------------------------
+def stepper(label:str, key:str, value:int, minv:int, maxv:int, step:int=1):
+    if key not in st.session_state: st.session_state[key] = value
+    c1, c2, c3 = st.columns([1,1,1], gap="small")
+    with c1:
+        if st.button("–", key=f"minus_{key}", use_container_width=True):
+            st.session_state[key] = max(minv, st.session_state[key]-step)
+    with c2: st.markdown(f"<div class='val stepper val'>{st.session_state[key]}</div>", unsafe_allow_html=True)
+    with c3:
+        if st.button("+", key=f"plus_{key}", use_container_width=True):
+            st.session_state[key] = min(maxv, st.session_state[key]+step)
+    return st.session_state[key]
+
+st.markdown("<div class='card' style='margin-top:14px'><div class='section-title'>Parameters & risk</div>", unsafe_allow_html=True)
+pc1, pc2, pc3 = st.columns(3, gap="large")
+with pc1:
+    ema_fast = stepper("EMA fast", "ema_fast", 15, 5, 60)
+    rsi_win  = stepper("RSI (period)", "rsi_win", 14, 5, 40)
+with pc2:
+    ema_mid  = stepper("EMA mid", "ema_mid", 40, 10, 120, 2)
+    atr_win  = stepper("ATR (period)", "atr_win", 14, 5, 40)
+with pc3:
+    ema_slow = stepper("EMA slow", "ema_slow", 100, 20, 300, 5)
+
+rsi_buy  = st.slider("RSI entry floor", 10, 60, 45)
+rsi_sell = st.slider("RSI exit ceiling", 40, 90, 60)
+st.markdown("</div>", unsafe_allow_html=True)
+
+p = SignalParams()
+p.ma_fast, p.ma_mid, p.ma_slow = ema_fast, ema_mid, ema_slow
+p.rsi_window, p.rsi_buy, p.rsi_sell = rsi_win, rsi_buy, rsi_sell
+
+
+# ---------------------------------------------------------------------
+# SENTIMENT
+# ---------------------------------------------------------------------
 try:
     vix = from_stooq("^vix")["Close"]
     sent = heuristic_from_vix(vix).reindex(close.index).ffill()
@@ -352,9 +186,9 @@ except Exception:
     sent = pd.Series(0, index=close.index)
 
 
-# -----------------------------------------------------------------------------
-# SIGNALS & DECISION
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# SIGNALS + RECOMMENDATION
+# ---------------------------------------------------------------------
 feat = compute_features(close, p)
 sig  = partial_signals(feat, p)
 score = ensemble_score(sig, sent, p)
@@ -364,235 +198,67 @@ last_score = float(score.iloc[-1])
 buy_now = float(buy_thr.iloc[-1] if isinstance(buy_thr, pd.Series) else buy_thr)
 sell_now = float(sell_thr.iloc[-1] if isinstance(sell_thr, pd.Series) else sell_thr)
 
-if last_score >= buy_now:
-    action, rec_cl = "KUP / AKUMULUJ", "good"
-elif last_score <= sell_now:
-    action, rec_cl = "SPRZEDAJ / REDUKUJ", "bad"
-else:
-    action, rec_cl = "TRZYMAJ", ""
+if last_score >= buy_now: action, rec_cl = "KUP / AKUMULUJ", "good"
+elif last_score <= sell_now: action, rec_cl = "SPRZEDAJ / REDUKUJ", "bad"
+else: action, rec_cl = "TRZYMAJ", ""
 
-# export signals CSV
-export_csv = pd.DataFrame({
-    "Date": feat.index, "Close": feat["Close"], "RSI": feat.get("RSI", pd.NA), "Score": score
-}).to_csv(index=False).encode("utf-8")
-with export_placeholder:
-    st.download_button("⬇️ Eksport sygnałów (CSV)", export_csv,
-                       file_name=f"signals_{(symbol or 'asset').replace('^','')}.csv",
-                       use_container_width=True)
-
-
-# -----------------------------------------------------------------------------
-# RECOMMENDATION BLOCK
-# -----------------------------------------------------------------------------
 st.markdown(
-    f"<div class='card reco {rec_cl}'><div class='h1'>🧭 Rekomendacja na dziś</div>"
-    f"<div class='sub'>Źródło: {used_source} • Score: {last_score:.2f} • BUY_thr: {buy_now:.2f} • SELL_thr: {sell_now:.2f}</div>"
-    f"<h2 style='margin:8px 0 4px 0; font-size:1.8rem;'>{action}</h2>"
-    f"</div>", unsafe_allow_html=True
+    f"<div class='card reco {rec_cl}'><b>🧭 Rekomendacja:</b> {action}<br>"
+    f"<span style='color:var(--muted)'>Score={last_score:.2f}, BUY_thr={buy_now:.2f}, SELL_thr={sell_now:.2f}</span></div>",
+    unsafe_allow_html=True
 )
 
 
-# -----------------------------------------------------------------------------
-# MAIN CHART
-# -----------------------------------------------------------------------------
-st.markdown("<div class='card-2'>", unsafe_allow_html=True)
-st.markdown("<div class='h1'>📈 Wykres ceny (markery sygnałów)</div>", unsafe_allow_html=True)
-
-range_choice = st.radio("Zakres", ["1M","3M","6M","YTD","1Y","3Y","MAX"], horizontal=True)
-
-def pick_range(idx, choice):
-    if len(idx)==0: return idx
-    end = idx[-1]
-    if choice=="1M": start = end - pd.DateOffset(months=1)
-    elif choice=="3M": start = end - pd.DateOffset(months=3)
-    elif choice=="6M": start = end - pd.DateOffset(months=6)
-    elif choice=="YTD": start = pd.Timestamp(end.year,1,1)
-    elif choice=="1Y": start = end - pd.DateOffset(years=1)
-    elif choice=="3Y": start = end - pd.DateOffset(years=3)
-    else: start = idx[0]
-    return idx[(idx>=start)&(idx<=end)]
-
-idx = pick_range(feat.index, range_choice)
-fsel = feat.loc[idx]; scsel = score.loc[idx]
-bsel = buy_thr.loc[idx] if isinstance(buy_thr, pd.Series) else pd.Series(buy_thr, index=idx)
-ssel = sell_thr.loc[idx] if isinstance(sell_thr, pd.Series) else pd.Series(sell_thr, index=idx)
-
+# ---------------------------------------------------------------------
+# CHART + BACKTEST + AUTO-TUNE (Light / Full)
+# ---------------------------------------------------------------------
 fig = go.Figure()
-fig.add_trace(go.Scatter(x=fsel.index, y=fsel["Close"], name="Close", mode="lines"))
-buy_mask = scsel >= bsel; sell_mask = scsel <= ssel
-fig.add_trace(go.Scatter(x=fsel.index[buy_mask], y=fsel["Close"][buy_mask], mode="markers", name="BUY",
-                         marker_symbol="triangle-up", marker_size=11))
-fig.add_trace(go.Scatter(x=fsel.index[sell_mask], y=fsel["Close"][sell_mask], mode="markers", name="SELL",
-                         marker_symbol="triangle-down", marker_size=11))
-fig.update_layout(height=540, xaxis=dict(rangeslider=dict(visible=True)),
-                  margin=dict(l=40,r=20,t=10,b=10),
-                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+fig.add_trace(go.Scatter(x=feat.index, y=feat["Close"], name="Close", mode="lines"))
 st.plotly_chart(fig, use_container_width=True, theme=None)
-st.markdown("</div>", unsafe_allow_html=True)
 
-
-# -----------------------------------------------------------------------------
-# EXTRA PANELS (RSI & SCORE)
-# -----------------------------------------------------------------------------
-cA, cB = st.columns(2, gap="large")
-with cA:
-    st.markdown("<div class='card-2'><div class='h2'>RSI</div>", unsafe_allow_html=True)
-    frsi = go.Figure()
-    if "RSI" in fsel.columns:
-        frsi.add_trace(go.Scatter(x=fsel.index, y=fsel["RSI"], name="RSI", mode="lines"))
-    frsi.update_layout(height=260, margin=dict(l=40,r=20,t=10,b=10))
-    st.plotly_chart(frsi, use_container_width=True, theme=None)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with cB:
-    st.markdown("<div class='card-2'><div class='h2'>Score + progi</div>", unsafe_allow_html=True)
-    fsc = go.Figure()
-    fsc.add_trace(go.Scatter(x=fsel.index, y=scsel, name="Score", mode="lines"))
-    fsc.add_trace(go.Scatter(x=bsel.index, y=bsel, name="Buy_thr", line=dict(dash="dot")))
-    fsc.add_trace(go.Scatter(x=ssel.index, y=ssel, name="Sell_thr", line=dict(dash="dot")))
-    fsc.update_layout(height=260, margin=dict(l=40,r=20,t=10,b=10))
-    st.plotly_chart(fsc, use_container_width=True, theme=None)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# -----------------------------------------------------------------------------
-# BACKTEST (vol targeting) vs Buy&Hold
-# -----------------------------------------------------------------------------
-st.markdown("<div class='card-2'><div class='h2'>Backtest (vol targeting) vs Buy&Hold</div>", unsafe_allow_html=True)
-ret = close.pct_change().fillna(0.0)
-size = volatility_target_position(ret, target_vol_annual=0.12, lookback=20)
-bt = backtest(close, score, buy_thr, sell_thr, 5, 5, size_series=size)
-m = metrics(bt["eq"], bt["ret"])
-st.write(m)
-
-feq = go.Figure()
-feq.add_trace(go.Scatter(x=bt.index, y=bt["eq"], name="Strategy"))
-feq.add_trace(go.Scatter(x=bt.index, y=bt["bh"], name="Buy&Hold"))
-feq.update_layout(height=300, margin=dict(l=40,r=20,t=10,b=10),
-                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-st.plotly_chart(feq, use_container_width=True, theme=None)
-
-
-# -----------------------------------------------------------------------------
-# AUTO-TUNE (on demand) — Light & Full + safe rerun
-# -----------------------------------------------------------------------------
 def _quick_space():
-    """Szybki, mały grid (kilkadziesiąt kombinacji)."""
-    return {
-        "rsi_window": [10, 14, 20],
-        "rsi_buy":    [25, 30, 35],
-        "rsi_sell":   [65, 70, 75],
-        "ma_fast":    [10, 20],
-        "ma_mid":     [50, 100],
-        "ma_slow":    [150],
-        "bb_window":  [20, 30],
-        "bb_std":     [1.5, 2.0],
-        "w_rsi":      [0.3, 0.5, 0.7],
-        "w_ma":       [0.3, 0.5, 0.7],
-        "w_bb":       [0.0, 0.2, 0.4],
-        "w_breakout": [0.0, 0.2, 0.4],
-        "w_sent":     [0.0, 0.2],
-        "percentile_window": [60, 120],
-        "percentile_mode":   [True],
-    }
+    return {"rsi_window":[10,14,20],"rsi_buy":[25,30,35],"rsi_sell":[65,70,75],
+            "ma_fast":[10,20],"ma_mid":[50,100],"ma_slow":[150],"bb_window":[20,30],"bb_std":[1.5,2.0],
+            "w_rsi":[0.3,0.5,0.7],"w_ma":[0.3,0.5,0.7],"w_bb":[0.0,0.2,0.4],
+            "w_breakout":[0.0,0.2,0.4],"w_sent":[0.0,0.2],
+            "percentile_window":[60,120],"percentile_mode":[True]}
 
 def _run_walk_forward_safely(space, folds, cost_bps):
-    """Uruchamia walk_forward z różnymi sygnaturami bez modyfikacji silnika."""
     dummy_sent = pd.Series(0, index=close.index)
-
-    # (A) nazwy argumentów bez sent
-    try:
-        return walk_forward(close, space=space, folds=folds, cost_bps=cost_bps)
-    except TypeError:
-        pass
-    except AttributeError as e:
-        if "reindex" not in str(e):
-            raise
-
-    # (B) pozycyjnie bez sent
-    try:
-        return walk_forward(close, space, folds, cost_bps)
-    except Exception:
-        pass
-
-    # (C) pozycyjnie z sent (częsty wariant: (close, sent, space, folds, cost_bps))
-    try:
-        return walk_forward(close, dummy_sent, space, folds, cost_bps)
-    except Exception:
-        pass
-
-    # (D) nazwy argumentów z sent (gdy implementacja go wymaga)
-    return walk_forward(close, dummy_sent, space=space, folds=folds, cost_bps=cost_bps)
-
-def _score_run_os(r):
-    m = r.get("metrics_os", {}) or {}
-    return m.get("sharpe", 0.0) or m.get("cagr", 0.0) or m.get("ret_total", 0.0)
+    try: return walk_forward(close, space=space, folds=folds, cost_bps=cost_bps)
+    except: return walk_forward(close, dummy_sent, space=space, folds=folds, cost_bps=cost_bps)
 
 def _apply_best_params(best_params):
-    """Wstrzykuje parametry do sliderów + bezpieczny rerun z krótką pauzą."""
-    keymap = {
-        "rsi_window": "rsi_w",
-        "rsi_buy": "rsi_b",
-        "rsi_sell": "rsi_s",
-        "ma_fast": "ma_f",
-        "ma_mid": "ma_m",
-        "ma_slow": "ma_s",
-        "bb_window": "bb_w",
-        "bb_std": "bb_s",
-        "w_rsi": "wg_rsi",
-        "w_ma": "wg_ma",
-        "w_bb": "wg_bb",
-        "w_breakout": "wg_br",
-        "w_sent": "wg_se",
-        "percentile_window": "perc_win",
-        "percentile_mode": "perc_on",
-    }
     updates = {}
-    for k, v in (best_params or {}).items():
-        if k in keymap:
-            if isinstance(v, float) and v.is_integer():
-                v = int(v)
-            updates[keymap[k]] = v
-
+    keymap = {"rsi_window":"rsi_win","rsi_buy":"rsi_buy","rsi_sell":"rsi_sell"}
+    for k,v in (best_params or {}).items():
+        if k in keymap: updates[keymap[k]]=v
     if updates:
         import time
         st.session_state.update(updates)
         st.success("✅ Zastosowano najlepsze parametry — odświeżam widok…")
-        time.sleep(0.3)  # bezpieczne opóźnienie, by uniknąć "SessionInfo not initialized"
-        try:
-            st.rerun()
-        except Exception as e:
-            st.warning(f"Rerun opóźniony (sesja się inicjuje): {e}")
-    else:
-        st.warning("Auto-Tune zakończony, ale nie zwrócił rozpoznawalnych parametrów.")
+        time.sleep(0.3)
+        st.rerun()
 
-def _autotune(profile: str):
-    st.markdown(f"<div class='card'><div class='h2'>🔁 {profile} Auto-Tune</div>", unsafe_allow_html=True)
+def _autotune(profile:str):
+    st.markdown(f"### 🔁 {profile} Auto-Tune")
     try:
-        if profile == "Light":
-            space = _quick_space()
-            folds = 2
-            cost  = 10
-        else:  # Full
-            space = grid_space()
-            folds = 4
-            cost  = 10
-
-        results, stability = _run_walk_forward_safely(space, folds, cost)
-        st.write("Wyniki OS per fold:", [{"fold": r.get("fold"), "metrics": r.get("metrics_os")} for r in results])
-        st.write("Stability (liczność wybieranych parametrów):", stability)
-
-        best_run    = max(results, key=_score_run_os)
-        best_params = best_run.get("best") or best_run.get("params") or {}
-        st.write("Wybrane parametry:", best_params)
-
-        _apply_best_params(best_params)
+        if profile=="Light": space=_quick_space(); folds=2; cost=10
+        else: space=grid_space(); folds=4; cost=10
+        results, stab=_run_walk_forward_safely(space, folds, cost)
+        best=max(results, key=lambda r:r.get('metrics_os',{}).get('sharpe',0))
+        _apply_best_params(best.get("best") or best.get("params"))
     except Exception as e:
         st.error(f"Auto-Tune błąd: {e}")
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# — przyciski Auto-Tune
-if auto_tune_light_click:
-    _autotune("Light")
-elif auto_tune_full_click:
-    _autotune("Full")
+b1,b2,b3=st.columns([1,1,1])
+with b1:
+    st.markdown("<div class='btn-accent'>", unsafe_allow_html=True)
+    if st.button("⚡ Light Auto-Tune", use_container_width=True): _autotune("Light")
+    st.markdown("</div>", unsafe_allow_html=True)
+with b2:
+    st.markdown("<div class='btn-ghost'>", unsafe_allow_html=True)
+    if st.button("🔁 Full Auto-Tune", use_container_width=True): _autotune("Full")
+    st.markdown("</div>", unsafe_allow_html=True)
+with b3:
+    st.button("⚡ Recompute", use_container_width=True)
