@@ -10,6 +10,152 @@ from core.sentiment import heuristic_from_vix
 from core.backtest import backtest, metrics
 from core.autotune import grid_space, walk_forward
 from core.risk import volatility_target_position
+# --- Left: input data (CSV / Stooq) + preview + ręczne linki + load ---
+with left:
+    import io, time, requests
+
+    st.markdown("### Input data ↩️")
+    src = st.radio("Source", ["Upload CSV", "Stooq"], horizontal=True, index=1)
+    interval = st.selectbox("Interval", ["D1"], index=0, disabled=True)  # placeholder na przyszłość
+    start_date = st.date_input("Backtest start (YYYY-MM-DD)", pd.to_datetime("2022-01-01"))
+    symbol = st.text_input("Ticker", value="btcpln")
+
+    # Upload CSV (pokazujemy nazwę/rozmiar po wgraniu)
+    if src == "Upload CSV":
+        csv_file = st.file_uploader("CSV (Date/Data, Close/Zamknięcie)", type=["csv"], label_visibility="collapsed")
+        if csv_file is not None:
+            size_kb = f"{(getattr(csv_file, 'size', 0)/1024):.1f} KB"
+            st.caption(f"📎 Wczytano: **{csv_file.name}** {size_kb}")
+    else:
+        csv_file = None
+
+    sep_choice = st.selectbox("Separator", ["Auto", ",", ";", "\\t"], index=0,
+                              help="Wymuś separator jeśli parser się myli")
+
+    # Trzy równe przyciski w jednym rzędzie
+    a1, a2, a3 = st.columns(3, gap="small")
+    with a1:
+        primary_click = st.button("📥 Stooq" if src=="Stooq" else "📎 Wgraj CSV", use_container_width=True)
+    with a2:
+        preview_click = st.button("🔎 Preview first lines (Stooq)", use_container_width=True, disabled=(src!="Stooq"))
+    with a3:
+        load_click = st.button("⚡ Load data", type="primary", use_container_width=True)
+
+    # Podgląd pierwszych linii dla Stooq
+    if preview_click and src=="Stooq":
+        try:
+            sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+            url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+            r = requests.get(url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
+            r.raise_for_status()
+            st.code("\n".join((r.text or "").splitlines()[:6]) or "(pusto)", language="text")
+        except Exception as e:
+            st.error(f"Preview failed: {e}")
+
+    # Flagi stanu (gdyby nie istniały)
+    st.session_state.setdefault("data_ok", False)
+    st.session_state.setdefault("df", None)
+    st.session_state.setdefault("used_source", None)
+
+    # Właściwe ładowanie danych
+    if load_click:
+        try:
+            if src == "Upload CSV":
+                if not csv_file:
+                    st.warning("Wgraj plik CSV (Date/Data i Close/Zamknięcie).")
+                    st.session_state.update(data_ok=False, df=None, used_source=None)
+                else:
+                    _df = from_csv(csv_file)
+                    st.session_state.update(df=_df, used_source="CSV", data_ok=True)
+                    st.success(f"✅ CSV OK: {len(_df)} wierszy.")
+            else:
+                # Stooq
+                sym = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+                forced = None
+                if sep_choice != "Auto":
+                    forced = "\t" if sep_choice == "\\t" else sep_choice
+                else:
+                    sniff_url = f"https://stooq.pl/q/d/l/?s={sym}&i=d&_={int(time.time())}"
+                    r = requests.get(sniff_url, timeout=12, headers={"User-Agent":"Mozilla/5.0","Accept":"text/csv"})
+                    r.raise_for_status()
+                    header = (r.text or "").splitlines()[0] if (r.text or "") else ""
+                    if ";" in header: forced = ";"
+                    elif "," in header: forced = ","
+                    elif "\t" in header: forced = "\t"
+                    if not header or header.lstrip().startswith("<"):
+                        raise ValueError("Stooq zwrócił pusty/HTML – spróbuj ponownie lub użyj CSV.")
+
+                _df = from_stooq(symbol, forced_sep=forced)
+                st.session_state.update(df=_df, used_source="Stooq", data_ok=True)
+                st.success(f"✅ Stooq OK: {len(_df)} wierszy. (sep={forced or 'auto'})")
+
+        except Exception as e:
+            # Reset i komunikaty + linki ręczne + jednorazowy proxy-fallback
+            st.session_state.update(data_ok=False, df=None, used_source=None)
+            st.error(f"❌ Błąd wczytywania: {e}")
+
+            sym_norm = symbol.strip().lower().replace("^","").replace("/","").replace("=","")
+            direct_url = f"https://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+            proxy_url  = f"https://r.jina.ai/http://stooq.pl/q/d/l/?s={sym_norm}&i=d"
+
+            st.markdown("**🔗 Pobierz ręcznie:** "
+                        f"[CSV (Stooq)]({direct_url}) • "
+                        f"[Proxy]({proxy_url})  \n"
+                        "Zapisz plik i wgraj go opcją **Upload CSV**.")
+
+            # Próbujemy raz pobrać proxy po stronie serwera i załadować automatycznie
+            try:
+                rproxy = requests.get(proxy_url, timeout=12, headers={"User-Agent":"Mozilla/5.0"})
+                rproxy.raise_for_status()
+                txt = (rproxy.text or "").strip()
+                if txt and not txt.lstrip().startswith("<"):
+                    # Autodetekcja separatora -> normalizacja -> Date index, Close col
+                    try:
+                        df_try = pd.read_csv(io.StringIO(txt), sep=None, engine="python")
+                    except Exception:
+                        df_try = None
+                    if df_try is None or df_try.empty:
+                        for s in (";", ",", "\t"):
+                            try:
+                                df_try = pd.read_csv(io.StringIO(txt), sep=s)
+                                if not df_try.empty:
+                                    break
+                            except Exception:
+                                pass
+                    if df_try is not None and not df_try.empty:
+                        df_try.columns = [str(c).strip() for c in df_try.columns]
+                        date_col = next((c for c in ("Date","Data") if c in df_try.columns), df_try.columns[0])
+                        close_col = next(
+                            (c for c in ("Close","Zamkniecie","Zamknięcie","Zamk.","Kurs","Price","Adj Close") if c in df_try.columns),
+                            (df_try.columns[4] if df_try.shape[1] >= 5 else df_try.columns[-1])
+                        )
+                        out = df_try[[date_col, close_col]].rename(columns={date_col:"Date", close_col:"Close"}).copy()
+                        out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.tz_localize(None)
+                        out["Close"] = pd.to_numeric(out["Close"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+                        out = out.dropna().sort_values("Date").set_index("Date")[["Close"]]
+                        if not out.empty:
+                            st.success("✅ Proxy działa — dane załadowano automatycznie.")
+                            st.session_state.update(df=out, used_source="Stooq (proxy)", data_ok=True)
+                            csv_bytes = out.reset_index().to_csv(index=False).encode("utf-8")
+                            st.download_button("⬇️ Pobierz CSV (z serwera)", csv_bytes,
+                                               file_name=f"{sym_norm}_stooq.csv", mime="text/csv", use_container_width=True)
+                            st.stop()
+            except Exception:
+                pass  # zostawiamy instrukcję ręczną
+
+    # Krótka diagnostyka po sukcesie
+    if st.session_state.data_ok and st.session_state.df is not None:
+        _df = st.session_state.df
+        st.caption("ℹ️ Podsumowanie danych")
+        cA, cB = st.columns(2)
+        with cA:
+            st.write(f"Źródło: **{st.session_state.used_source}**")
+            st.write(f"Wiersze: **{len(_df)}**")
+        with cB:
+            st.write(f"Zakres: **{_df.index.min().date()} → {_df.index.max().date()}**")
+            st.write(f"Ostatnie Close: **{float(_df['Close'].iloc[-1]):,.4f}**")
+    else:
+        st.warning("Najpierw wybierz **Source** i kliknij **Load data**.")
 
 
 # ---------------------------------------------------------------------
